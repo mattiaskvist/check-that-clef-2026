@@ -12,4 +12,7 @@ uv remove <dependency>
 # To run formatting and linting checks, use:
 uv run ruff format
 uv run ruff check
+
+# Authenticate with HuggingFace
+uv run hf auth login
 ```
