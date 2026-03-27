@@ -2,6 +2,7 @@
 __pycache__/
 *.py[codz]
 *$py.class
+collection_embeddings.npy
 
 # C extensions
 *.so
