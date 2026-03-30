@@ -21,14 +21,15 @@ def scorer(top5_preds, lang, split):
     data = load_dataset("sschellhammer/CT26_Task1_SourceRetrievalForScientificWebClaims", lang)
     
     datasplit = data[split]
-    labels = np.array(datasplit["pubkey"]).tolist()
+    labels = [str(label) for label in np.array(datasplit["pubkey"]).tolist()]
 
     mrr_scores = []
     for preds, label in zip(top5_preds, labels):
         assert len(preds) == 5, "exactly 5 predictions per query should be provided"
+        preds_as_str = [str(pred) for pred in preds]
         
-        if label in preds:
-            mrr_scores.append(1 / (preds.index(label) + 1))
+        if label in preds_as_str:
+            mrr_scores.append(1 / (preds_as_str.index(label) + 1))
         else:
             mrr_scores.append(0)  
 
