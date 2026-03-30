@@ -85,6 +85,22 @@ def test_build_query_embedding_text_with_metadata_labels_weak_extraction_as_reje
     assert evidence is not None
 
 
+def test_build_query_embedding_text_with_metadata_labels_accepted_extraction():
+    value, outcome, evidence = build_query_embedding_text_with_metadata("raw tweet", SuccessfulExtractor())
+
+    assert value == "structured raw tweet"
+    assert outcome == "parsed+accepted"
+    assert evidence is not None
+
+
+def test_build_query_embedding_text_with_metadata_labels_error_fallback():
+    value, outcome, evidence = build_query_embedding_text_with_metadata("raw tweet", FailingExtractor())
+
+    assert value == "raw tweet"
+    assert outcome == "error->fallback"
+    assert evidence is None
+
+
 def test_predict_top5_with_embeddings_returns_ranked_values_and_pads():
     service = FakeService()
     metadata_rows = [
