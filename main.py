@@ -153,12 +153,16 @@ def _select_subset_rows(
     return [rows[idx] for idx in indices], indices
 
 
-def _estimate_query_api_usage(query_count: int, skip_query_extraction: bool) -> dict[str, int]:
+def _estimate_query_api_usage(query_count: int, skip_query_extraction: bool) -> dict[str, int | str | float]:
     extraction_calls = 0 if skip_query_extraction else query_count
+    extraction_mode = "disabled" if skip_query_extraction else "enabled"
+    calls_per_query = 1 if skip_query_extraction else 2
     embedding_calls = query_count
     total_calls = extraction_calls + embedding_calls
     return {
         "query_count": query_count,
+        "extraction_mode": extraction_mode,
+        "calls_per_query": calls_per_query,
         "extraction_calls": extraction_calls,
         "embedding_calls": embedding_calls,
         "total_calls": total_calls,
@@ -265,6 +269,7 @@ def _predict(args: argparse.Namespace) -> int:
         query_count=len(selected_rows),
         skip_query_extraction=args.skip_query_extraction,
     )
+    projected_cost = float(usage["total_calls"]) * args.estimated_cost_per_call_sek
     guardrail_status = _enforce_cost_guardrail(
         total_calls=usage["total_calls"],
         max_calls=args.max_estimated_api_calls,
@@ -272,8 +277,10 @@ def _predict(args: argparse.Namespace) -> int:
     )
     print(
         "Usage estimate: "
-        f"queries={usage['query_count']} extraction_calls={usage['extraction_calls']} "
-        f"embedding_calls={usage['embedding_calls']} total_calls={usage['total_calls']}"
+        f"queries={usage['query_count']} extraction_mode={usage['extraction_mode']} "
+        f"calls_per_query={usage['calls_per_query']} extraction_calls={usage['extraction_calls']} "
+        f"embedding_calls={usage['embedding_calls']} total_calls={usage['total_calls']} "
+        f"projected_cost_sek={projected_cost:.2f}"
     )
     print(f"Guardrail status: {guardrail_status}")
     if subset_limit is not None:
@@ -416,6 +423,7 @@ def build_parser() -> argparse.ArgumentParser:
     predict.add_argument("--subset-seed", type=int, default=42)
     predict.add_argument("--subset-per-language-limit", type=_positive_int, default=None)
     predict.add_argument("--max-estimated-api-calls", type=_positive_int, default=200)
+    predict.add_argument("--estimated-cost-per-call-sek", type=float, default=0.10)
     predict.add_argument("--allow-cost-overrun", action="store_true")
     predict.add_argument(
         "--skip-query-extraction",

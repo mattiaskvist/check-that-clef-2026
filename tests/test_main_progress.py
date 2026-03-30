@@ -30,8 +30,8 @@ def test_predict_rows_passes_disable_true_when_not_tty(monkeypatch):
     monkeypatch.setattr("clef_retrieval.gemini_client.GeminiService", FakeService)
     monkeypatch.setattr(
         main,
-        "build_query_embedding_text",
-        lambda *_args, **_kwargs: "query",
+        "_build_query_text_with_outcome",
+        lambda *_args, **_kwargs: ("query", "parsed+accepted"),
     )
     monkeypatch.setattr(
         main,

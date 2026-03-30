@@ -11,6 +11,8 @@ import main  # noqa: E402
 def test_usage_estimate_counts_model_calls():
     usage = main._estimate_query_api_usage(query_count=10, skip_query_extraction=False)
 
+    assert usage["extraction_mode"] == "enabled"
+    assert usage["calls_per_query"] == 2
     assert usage["extraction_calls"] == 10
     assert usage["embedding_calls"] == 10
     assert usage["total_calls"] == 20
@@ -61,5 +63,6 @@ def test_predict_reports_usage_and_guardrail_warning(monkeypatch, tmp_path, caps
 
     assert exit_code == 0
     assert "Usage estimate:" in output
+    assert "projected_cost_sek=" in output
     assert "Guardrail status: WARNING" in output
     assert "Extraction outcomes:" in output
