@@ -26,8 +26,12 @@ from clef_retrieval.paper_index import (  # noqa: E402
     validate_cached_index,
 )
 from clef_retrieval.pipeline import (  # noqa: E402
-    build_query_embedding_text,
+    build_query_embedding_text_with_metadata,
     rank_from_query_embedding,
+)
+from clef_retrieval.query_policy import (  # noqa: E402
+    select_seeded_subset_indices,
+    should_promote_from_subset,
 )
 from scorer import scorer  # noqa: E402
 
@@ -69,7 +73,10 @@ def _predict_rows(
     limit: int | None,
     query_batch_size: int | None,
     skip_query_extraction: bool,
-) -> list[dict[str, object]]:
+    subset_per_language_limit: int | None = None,
+    subset_seed: int | None = None,
+    include_extraction_outcomes: bool = False,
+) -> list[dict[str, object]] | tuple[list[dict[str, object]], dict[str, int]]:
     from clef_retrieval.gemini_client import GeminiService
 
     _require_gemini_key()
@@ -79,9 +86,11 @@ def _predict_rows(
     rows = list(load_language_split(lang, split))
     if limit is not None:
         rows = rows[:limit]
+    rows, _ = _select_subset_rows(rows, subset_per_language_limit, subset_seed)
     batch_size = query_batch_size or config.query_batch_size
 
     predictions: list[dict[str, object]] = []
+    extraction_outcomes = {"parsed+accepted": 0, "parsed+rejected": 0, "error->fallback": 0}
     for i in tqdm(
         range(0, len(rows), batch_size),
         desc=f"predict {lang}/{split}",
@@ -91,8 +100,13 @@ def _predict_rows(
         batch_rows = rows[i : i + batch_size]
         if skip_query_extraction:
             query_texts = [str(row.get("text", "")) for row in batch_rows]
+            extraction_outcomes["error->fallback"] += len(batch_rows)
         else:
-            query_texts = [build_query_embedding_text(str(row.get("text", "")), service) for row in batch_rows]
+            query_texts = []
+            for row in batch_rows:
+                query_text, outcome = _build_query_text_with_outcome(str(row.get("text", "")), service, config)
+                query_texts.append(query_text)
+                extraction_outcomes[outcome] += 1
         query_embeddings = service.embed_texts(query_texts)
         if len(query_embeddings) != len(batch_rows):
             raise ValueError("Query embedding count mismatch for prediction batch.")
@@ -113,7 +127,59 @@ def _predict_rows(
                     "top5": top5,
                 }
             )
+    if include_extraction_outcomes:
+        return predictions, extraction_outcomes
     return predictions
+
+
+def _build_query_text_with_outcome(
+    tweet_text: str,
+    service,
+    config: RetrievalConfig,
+) -> tuple[str, str]:
+    query_text, outcome, _ = build_query_embedding_text_with_metadata(tweet_text, service, config)
+    return query_text, outcome
+
+
+def _select_subset_rows(
+    rows: list[dict[str, object]],
+    subset_limit: int | None,
+    subset_seed: int | None,
+) -> tuple[list[dict[str, object]], list[int]]:
+    if subset_limit is None:
+        return rows, list(range(len(rows)))
+    seed = subset_seed if subset_seed is not None else 0
+    indices = select_seeded_subset_indices(len(rows), subset_limit, seed)
+    return [rows[idx] for idx in indices], indices
+
+
+def _estimate_query_api_usage(query_count: int, skip_query_extraction: bool) -> dict[str, int]:
+    extraction_calls = 0 if skip_query_extraction else query_count
+    embedding_calls = query_count
+    total_calls = extraction_calls + embedding_calls
+    return {
+        "query_count": query_count,
+        "extraction_calls": extraction_calls,
+        "embedding_calls": embedding_calls,
+        "total_calls": total_calls,
+    }
+
+
+def _enforce_cost_guardrail(total_calls: int, max_calls: int | None, allow_exceed: bool) -> str:
+    if max_calls is None or total_calls <= max_calls:
+        return "OK"
+    if allow_exceed:
+        return "WARNING"
+    raise ValueError(f"Cost guardrail exceeded: estimated calls {total_calls} > limit {max_calls}")
+
+
+def _predict_result_with_outcomes(
+    result: list[dict[str, object]] | tuple[list[dict[str, object]], dict[str, int]],
+) -> tuple[list[dict[str, object]], dict[str, int]]:
+    if isinstance(result, tuple):
+        rows, outcomes = result
+        return rows, outcomes
+    return result, {"parsed+accepted": 0, "parsed+rejected": 0, "error->fallback": len(result)}
 
 
 def _default_prediction_path(config: RetrievalConfig, lang: str, split: str) -> Path:
@@ -189,13 +255,52 @@ def _predict(args: argparse.Namespace) -> int:
     config = RetrievalConfig()
     query_model = "disabled (raw tweet text)" if args.skip_query_extraction else config.query_model
     print(f"Models: embedding={config.embedding_model}, query-extraction={query_model}")
-    rows = _predict_rows(
+    raw_rows = list(load_language_split(args.lang, args.split))
+    if args.limit is not None:
+        raw_rows = raw_rows[: args.limit]
+    subset_limit = args.subset_per_language_limit
+    subset_seed = args.subset_seed
+    selected_rows, selected_indices = _select_subset_rows(raw_rows, subset_limit, subset_seed)
+    usage = _estimate_query_api_usage(
+        query_count=len(selected_rows),
+        skip_query_extraction=args.skip_query_extraction,
+    )
+    guardrail_status = _enforce_cost_guardrail(
+        total_calls=usage["total_calls"],
+        max_calls=args.max_estimated_api_calls,
+        allow_exceed=args.allow_cost_overrun,
+    )
+    print(
+        "Usage estimate: "
+        f"queries={usage['query_count']} extraction_calls={usage['extraction_calls']} "
+        f"embedding_calls={usage['embedding_calls']} total_calls={usage['total_calls']}"
+    )
+    print(f"Guardrail status: {guardrail_status}")
+    if subset_limit is not None:
+        print(
+            "Subset mode: enabled "
+            f"(lang={args.lang}, split={args.split}, selected={len(selected_rows)}, seed={subset_seed}, indices={selected_indices})"
+        )
+
+    prediction_result = _predict_rows(
         config,
         args.lang,
         args.split,
         args.limit,
         args.query_batch_size,
         args.skip_query_extraction,
+        subset_per_language_limit=subset_limit,
+        subset_seed=subset_seed,
+        include_extraction_outcomes=True,
+    )
+    rows, extraction_outcomes = _predict_result_with_outcomes(prediction_result)
+    total_queries = max(len(rows), 1)
+    print(
+        "Extraction outcomes: "
+        f"parsed+accepted={extraction_outcomes['parsed+accepted']} "
+        f"parsed+rejected={extraction_outcomes['parsed+rejected']} "
+        f"error->fallback={extraction_outcomes['error->fallback']} "
+        f"(accepted_rate={extraction_outcomes['parsed+accepted'] / total_queries:.2%})"
     )
     output_path = Path(args.output) if args.output else _default_prediction_path(config, args.lang, args.split)
     _write_predictions(output_path, rows)
@@ -218,14 +323,17 @@ def _evaluate(args: argparse.Namespace) -> int:
     else:
         query_model = "disabled (raw tweet text)" if args.skip_query_extraction else config.query_model
         print(f"Models: embedding={config.embedding_model}, query-extraction={query_model}")
-        rows = _predict_rows(
+        prediction_result = _predict_rows(
             config,
             args.lang,
             args.split,
             args.limit,
             args.query_batch_size,
             args.skip_query_extraction,
+            subset_per_language_limit=args.subset_per_language_limit,
+            subset_seed=args.subset_seed,
         )
+        rows, _ = _predict_result_with_outcomes(prediction_result)
 
     if not rows:
         raise ValueError("No predictions available for evaluation.")
@@ -240,6 +348,42 @@ def _evaluate(args: argparse.Namespace) -> int:
     ]
     score = scorer(top5_preds, lang=args.lang, split=args.split)
     print(f"MRR@5: {score:.6f} ({len(rows)} queries)")
+    if args.multilingual_metrics:
+        per_language_scores: dict[str, float] = {}
+        for language in ("en", "de", "fr"):
+            lang_prediction_path = Path(args.predictions) if args.predictions else _default_prediction_path(config, language, args.split)
+            if not lang_prediction_path.exists():
+                continue
+            lang_rows = _read_predictions(lang_prediction_path)
+            if args.limit is not None:
+                lang_rows = lang_rows[: args.limit]
+            if not lang_rows:
+                continue
+            lang_top5 = [list(row["top5"]) for row in lang_rows]
+            lang_score = scorer(lang_top5, lang=language, split=args.split)
+            per_language_scores[language] = lang_score
+            print(f"MRR@5 [{language}]: {lang_score:.6f} ({len(lang_rows)} queries)")
+        if per_language_scores:
+            overall = sum(per_language_scores.values()) / len(per_language_scores)
+            print(f"MRR@5 overall (en,de,fr): {overall:.6f}")
+            if (
+                args.promotion_baseline_overall is not None
+                and args.promotion_baseline_en is not None
+                and args.promotion_baseline_de is not None
+                and args.promotion_baseline_fr is not None
+            ):
+                promote = should_promote_from_subset(
+                    baseline_overall=args.promotion_baseline_overall,
+                    candidate_overall=overall,
+                    baseline_by_language={
+                        "en": args.promotion_baseline_en,
+                        "de": args.promotion_baseline_de,
+                        "fr": args.promotion_baseline_fr,
+                    },
+                    candidate_by_language=per_language_scores,
+                )
+                status = "PROMOTE" if promote else "BLOCKED"
+                print(f"Promotion gate: {status}")
     elapsed = time.perf_counter() - start
     rate = len(rows) / elapsed if elapsed > 0 else 0.0
     print(f"Evaluate summary: {len(rows)} tweets in {elapsed:.1f}s ({rate:.2f} tweets/s)")
@@ -269,6 +413,10 @@ def build_parser() -> argparse.ArgumentParser:
     predict.add_argument("--split", choices=["train", "dev"], required=True)
     predict.add_argument("--limit", type=_positive_int, default=None)
     predict.add_argument("--query-batch-size", type=_positive_int, default=None)
+    predict.add_argument("--subset-seed", type=int, default=42)
+    predict.add_argument("--subset-per-language-limit", type=_positive_int, default=None)
+    predict.add_argument("--max-estimated-api-calls", type=_positive_int, default=200)
+    predict.add_argument("--allow-cost-overrun", action="store_true")
     predict.add_argument(
         "--skip-query-extraction",
         action="store_true",
@@ -285,6 +433,8 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--lang", choices=["de", "en", "fr"], required=True)
     evaluate.add_argument("--split", choices=["train", "dev"], required=True)
     evaluate.add_argument("--limit", type=_positive_int, default=None)
+    evaluate.add_argument("--subset-seed", type=int, default=42)
+    evaluate.add_argument("--subset-per-language-limit", type=_positive_int, default=None)
     evaluate.add_argument(
         "--predictions",
         default=None,
@@ -301,6 +451,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip LLM tweet-structure extraction and embed raw tweet text directly (faster).",
     )
+    evaluate.add_argument("--multilingual-metrics", action="store_true")
+    evaluate.add_argument("--promotion-baseline-overall", type=float, default=None)
+    evaluate.add_argument("--promotion-baseline-en", type=float, default=None)
+    evaluate.add_argument("--promotion-baseline-de", type=float, default=None)
+    evaluate.add_argument("--promotion-baseline-fr", type=float, default=None)
     evaluate.set_defaults(handler=_evaluate)
     return parser
 
