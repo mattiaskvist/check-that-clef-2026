@@ -29,7 +29,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. System enforces negative constraints from tweets to filter obvious false-positive candidates
   5. System processes predictions and evaluations with cached reuse to avoid redundant LLM/embedding calls
   6. System supports subset-first experiment loops (limited queries) before full-split runs to reduce iteration latency
-**Plans**: TBD
+**Plans**: 3 plans
+Plans:
+- [ ] 01-01-PLAN.md — Define strict gate, language normalization, and seeded subset policy contracts
+- [ ] 01-02-PLAN.md — Implement gate-aware weighted reranking with negative-constraint enforcement
+- [ ] 01-03-PLAN.md — Add CLI telemetry, multilingual metrics, subset promotion gate, and cost guardrails
 
 ### Phase 2: Semantic Reranking
 **Goal**: System reranks top-K candidates using semantic similarity rather than lexical overlap
