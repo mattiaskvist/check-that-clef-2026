@@ -99,3 +99,50 @@ def test_predict_prints_summary_when_successful(monkeypatch, tmp_path, capsys):
 
     assert exit_code == 0
     assert "Predict summary:" in captured
+
+
+def test_predict_accepts_query_batch_size_argument():
+    result = _run_cli("predict", "--lang", "en", "--split", "dev", "--query-batch-size", "16", "--help")
+    assert result.returncode == 0
+
+
+def test_predict_accepts_skip_query_extraction_argument():
+    result = _run_cli("predict", "--lang", "en", "--split", "dev", "--skip-query-extraction", "--help")
+    assert result.returncode == 0
+
+
+def test_evaluate_uses_cached_predictions_without_recomputing(monkeypatch, tmp_path, capsys):
+    root = Path(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    import main
+
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    prediction_path = cache_dir / "predictions_en_dev.jsonl"
+    prediction_path.write_text(
+        '\n'.join(
+            [
+                '{"index": 0, "text": "t0", "pubkey": "1", "top5": ["1", "2", "3", "4", "5"]}',
+                '{"index": 1, "text": "t1", "pubkey": "2", "top5": ["2", "1", "3", "4", "5"]}',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(main, "RetrievalConfig", lambda: RetrievalConfigModel(cache_dir=str(cache_dir)))
+    monkeypatch.setattr(main, "_predict_rows", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("should not recompute predictions")))
+    monkeypatch.setattr(main, "scorer", lambda top5_preds, lang, split: 0.5)
+
+    exit_code = main.main(["evaluate", "--lang", "en", "--split", "dev"])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Using cached predictions from" in output
+    assert "MRR@5:" in output
+
+
+def test_evaluate_accepts_recompute_argument():
+    result = _run_cli("evaluate", "--lang", "en", "--split", "dev", "--recompute", "--help")
+    assert result.returncode == 0

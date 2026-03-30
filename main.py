@@ -25,7 +25,10 @@ from clef_retrieval.paper_index import (  # noqa: E402
     load_jsonl,
     validate_cached_index,
 )
-from clef_retrieval.pipeline import predict_top5_with_embeddings  # noqa: E402
+from clef_retrieval.pipeline import (  # noqa: E402
+    build_query_embedding_text,
+    rank_from_query_embedding,
+)
 from scorer import scorer  # noqa: E402
 
 
@@ -64,6 +67,8 @@ def _predict_rows(
     lang: str,
     split: str,
     limit: int | None,
+    query_batch_size: int | None,
+    skip_query_extraction: bool,
 ) -> list[dict[str, object]]:
     from clef_retrieval.gemini_client import GeminiService
 
@@ -74,29 +79,40 @@ def _predict_rows(
     rows = list(load_language_split(lang, split))
     if limit is not None:
         rows = rows[:limit]
+    batch_size = query_batch_size or config.query_batch_size
 
     predictions: list[dict[str, object]] = []
-    for row in tqdm(
-        rows,
+    for i in tqdm(
+        range(0, len(rows), batch_size),
         desc=f"predict {lang}/{split}",
-        unit="tweet",
+        unit="batch",
         disable=not sys.stderr.isatty(),
     ):
-        top5 = predict_top5_with_embeddings(
-            tweet_text=str(row.get("text", "")),
-            service=service,
-            paper_embeddings=embeddings,
-            metadata_rows=metadata_rows,
-            top_k=config.top_k,
-        )
-        predictions.append(
-            {
-                "index": row.get("index"),
-                "text": row.get("text", ""),
-                "pubkey": row.get("pubkey"),
-                "top5": top5,
-            }
-        )
+        batch_rows = rows[i : i + batch_size]
+        if skip_query_extraction:
+            query_texts = [str(row.get("text", "")) for row in batch_rows]
+        else:
+            query_texts = [build_query_embedding_text(str(row.get("text", "")), service) for row in batch_rows]
+        query_embeddings = service.embed_texts(query_texts)
+        if len(query_embeddings) != len(batch_rows):
+            raise ValueError("Query embedding count mismatch for prediction batch.")
+
+        for row, query_embedding in zip(batch_rows, query_embeddings):
+            top5 = rank_from_query_embedding(
+                tweet_text=str(row.get("text", "")),
+                query_embedding=query_embedding,
+                paper_embeddings=embeddings,
+                metadata_rows=metadata_rows,
+                top_k=config.top_k,
+            )
+            predictions.append(
+                {
+                    "index": row.get("index"),
+                    "text": row.get("text", ""),
+                    "pubkey": row.get("pubkey"),
+                    "top5": top5,
+                }
+            )
     return predictions
 
 
@@ -110,6 +126,19 @@ def _write_predictions(path: Path, rows: list[dict[str, object]]) -> None:
         for row in rows:
             handle.write(json.dumps(row, ensure_ascii=False))
             handle.write("\n")
+
+
+def _read_predictions(path: Path) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            stripped = line.strip()
+            if stripped:
+                parsed = json.loads(stripped)
+                if not isinstance(parsed, dict):
+                    raise ValueError("Prediction row must be a JSON object.")
+                rows.append(parsed)
+    return rows
 
 
 def _build_index(args: argparse.Namespace) -> int:
@@ -158,7 +187,16 @@ def _build_index(args: argparse.Namespace) -> int:
 def _predict(args: argparse.Namespace) -> int:
     start = time.perf_counter()
     config = RetrievalConfig()
-    rows = _predict_rows(config, args.lang, args.split, args.limit)
+    query_model = "disabled (raw tweet text)" if args.skip_query_extraction else config.query_model
+    print(f"Models: embedding={config.embedding_model}, query-extraction={query_model}")
+    rows = _predict_rows(
+        config,
+        args.lang,
+        args.split,
+        args.limit,
+        args.query_batch_size,
+        args.skip_query_extraction,
+    )
     output_path = Path(args.output) if args.output else _default_prediction_path(config, args.lang, args.split)
     _write_predictions(output_path, rows)
     print(f"Wrote {len(rows)} predictions to {output_path}")
@@ -171,7 +209,26 @@ def _predict(args: argparse.Namespace) -> int:
 def _evaluate(args: argparse.Namespace) -> int:
     start = time.perf_counter()
     config = RetrievalConfig()
-    rows = _predict_rows(config, args.lang, args.split, args.limit)
+    prediction_path = Path(args.predictions) if args.predictions else _default_prediction_path(config, args.lang, args.split)
+    if prediction_path.exists() and not args.recompute:
+        print(f"Using cached predictions from {prediction_path}")
+        rows = _read_predictions(prediction_path)
+        if args.limit is not None:
+            rows = rows[: args.limit]
+    else:
+        query_model = "disabled (raw tweet text)" if args.skip_query_extraction else config.query_model
+        print(f"Models: embedding={config.embedding_model}, query-extraction={query_model}")
+        rows = _predict_rows(
+            config,
+            args.lang,
+            args.split,
+            args.limit,
+            args.query_batch_size,
+            args.skip_query_extraction,
+        )
+
+    if not rows:
+        raise ValueError("No predictions available for evaluation.")
     top5_preds = [
         list(row["top5"])
         for row in tqdm(
@@ -211,6 +268,12 @@ def build_parser() -> argparse.ArgumentParser:
     predict.add_argument("--lang", choices=["de", "en", "fr"], required=True)
     predict.add_argument("--split", choices=["train", "dev"], required=True)
     predict.add_argument("--limit", type=_positive_int, default=None)
+    predict.add_argument("--query-batch-size", type=_positive_int, default=None)
+    predict.add_argument(
+        "--skip-query-extraction",
+        action="store_true",
+        help="Skip LLM tweet-structure extraction and embed raw tweet text directly (faster).",
+    )
     predict.add_argument(
         "--output",
         default=None,
@@ -222,6 +285,22 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--lang", choices=["de", "en", "fr"], required=True)
     evaluate.add_argument("--split", choices=["train", "dev"], required=True)
     evaluate.add_argument("--limit", type=_positive_int, default=None)
+    evaluate.add_argument(
+        "--predictions",
+        default=None,
+        help="Path to an existing JSONL predictions file (default: <cache_dir>/predictions_<lang>_<split>.jsonl)",
+    )
+    evaluate.add_argument(
+        "--recompute",
+        action="store_true",
+        help="Ignore cached predictions and recompute with Gemini before scoring.",
+    )
+    evaluate.add_argument("--query-batch-size", type=_positive_int, default=None)
+    evaluate.add_argument(
+        "--skip-query-extraction",
+        action="store_true",
+        help="Skip LLM tweet-structure extraction and embed raw tweet text directly (faster).",
+    )
     evaluate.set_defaults(handler=_evaluate)
     return parser
 
