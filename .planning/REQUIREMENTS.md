@@ -63,20 +63,20 @@ Explicitly excluded for this milestone.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| QRY-01 | Phase 1 | Pending |
-| QRY-02 | Phase 1 | Pending |
-| QRY-03 | Phase 1 | Pending |
-| QRY-04 | Phase 1 | Pending |
-| QRY-05 | Phase 1 | Pending |
-| RNK-01 | Phase 2 | Pending |
-| RNK-02 | Phase 2 | Pending |
-| RNK-03 | Phase 3 | Pending |
-| EVAL-01 | Phase 1 | Pending |
-| EVAL-02 | Phase 1 | Pending |
-| EVAL-03 | Phase 2 | Pending |
-| OPS-01 | Phase 1 | Pending |
-| OPS-02 | Phase 1 | Pending |
-| OPS-03 | Phase 1 | Pending |
+| QRY-01 | 1 - Query Understanding | Pending |
+| QRY-02 | 1 - Query Understanding | Pending |
+| QRY-03 | 1 - Query Understanding | Pending |
+| QRY-04 | 1 - Query Understanding | Pending |
+| QRY-05 | 1 - Query Understanding | Pending |
+| RNK-01 | 2 - Semantic Reranking | Pending |
+| RNK-02 | 2 - Semantic Reranking | Pending |
+| RNK-03 | 3 - Duplicate Disambiguation | Pending |
+| EVAL-01 | 1 - Query Understanding | Pending |
+| EVAL-02 | 1 - Query Understanding | Pending |
+| EVAL-03 | 2 - Semantic Reranking | Pending |
+| OPS-01 | 1 - Query Understanding | Pending |
+| OPS-02 | 1 - Query Understanding | Pending |
+| OPS-03 | 1 - Query Understanding | Pending |
 
 **Coverage:**
 - v1 requirements: 14 total
@@ -85,4 +85,4 @@ Explicitly excluded for this milestone.
 
 ---
 *Requirements defined: 2026-03-31*
-*Last updated: 2026-03-31 after initial definition*
+*Last updated: 2026-03-31 after roadmap creation (traceability updated)*
