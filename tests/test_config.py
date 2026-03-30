@@ -13,3 +13,4 @@ def test_default_config_values():
     assert cfg.embed_min_interval_seconds == 1.1
     assert cfg.embed_max_retries == 5
     assert cfg.embed_backoff_base_seconds == 1.5
+    assert cfg.query_batch_size == 32

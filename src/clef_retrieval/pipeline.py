@@ -87,9 +87,25 @@ def predict_top5_with_embeddings(
     if not query_embeddings:
         return ensure_top5([])
 
+    return rank_from_query_embedding(
+        tweet_text=tweet_text,
+        query_embedding=query_embeddings[0],
+        paper_embeddings=paper_embeddings,
+        metadata_rows=metadata_rows,
+        top_k=top_k,
+    )
+
+
+def rank_from_query_embedding(
+    tweet_text: str,
+    query_embedding,
+    paper_embeddings,
+    metadata_rows: list[dict],
+    top_k: int,
+) -> list[str]:
     pubkeys = [str(row.get("pubkey", "")) for row in metadata_rows]
     candidates = retrieve_top_pubkeys(
-        query_embedding=query_embeddings[0],
+        query_embedding=query_embedding,
         paper_embeddings=paper_embeddings,
         pubkeys=pubkeys,
         k=top_k,

@@ -19,6 +19,8 @@ def test_predict_rows_passes_disable_true_when_not_tty(monkeypatch):
     class FakeService:
         def __init__(self, *_args, **_kwargs):
             pass
+        def embed_texts(self, texts):
+            return [[1.0, 0.0] for _ in texts]
 
     def fake_tqdm(iterable, **kwargs):
         calls.append(bool(kwargs.get("disable")))
@@ -28,10 +30,15 @@ def test_predict_rows_passes_disable_true_when_not_tty(monkeypatch):
     monkeypatch.setattr("clef_retrieval.gemini_client.GeminiService", FakeService)
     monkeypatch.setattr(
         main,
-        "predict_top5_with_embeddings",
+        "build_query_embedding_text",
+        lambda *_args, **_kwargs: "query",
+    )
+    monkeypatch.setattr(
+        main,
+        "rank_from_query_embedding",
         lambda **_kwargs: ["1", "1", "1", "1", "1"],
     )
 
-    rows = main._predict_rows(main.RetrievalConfig(), "en", "dev", 1)
+    rows = main._predict_rows(main.RetrievalConfig(), "en", "dev", 1, None, False)
     assert len(rows) == 1
     assert calls == [True]

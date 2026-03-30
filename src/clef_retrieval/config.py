@@ -14,3 +14,4 @@ class RetrievalConfig(BaseModel):
     embed_min_interval_seconds: float = Field(default=1.1, gt=0.0)
     embed_max_retries: int = Field(default=5, ge=0, le=20)
     embed_backoff_base_seconds: float = Field(default=1.5, gt=0.0)
+    query_batch_size: int = Field(default=32, ge=1, le=100)
