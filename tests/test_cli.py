@@ -146,3 +146,27 @@ def test_evaluate_uses_cached_predictions_without_recomputing(monkeypatch, tmp_p
 def test_evaluate_accepts_recompute_argument():
     result = _run_cli("evaluate", "--lang", "en", "--split", "dev", "--recompute", "--help")
     assert result.returncode == 0
+
+
+def test_predict_accepts_subset_seed_argument():
+    result = _run_cli("predict", "--lang", "en", "--split", "dev", "--subset-seed", "123", "--help")
+    assert result.returncode == 0
+
+
+def test_predict_accepts_subset_per_language_limit_argument():
+    result = _run_cli(
+        "predict",
+        "--lang",
+        "en",
+        "--split",
+        "dev",
+        "--subset-per-language-limit",
+        "50",
+        "--help",
+    )
+    assert result.returncode == 0
+
+
+def test_evaluate_accepts_multilingual_metrics_argument():
+    result = _run_cli("evaluate", "--lang", "en", "--split", "dev", "--multilingual-metrics", "--help")
+    assert result.returncode == 0
