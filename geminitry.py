@@ -4,12 +4,13 @@ from datasets import load_dataset
 from google import genai
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
+import time
 
 # ==========================================
 # Configuration
 # ==========================================
 # We use Gemini 2.5 Flash, which is incredibly fast and cheap/free for this volume
-MODEL_NAME = 'gemini-2.5-flash' 
+MODEL_NAME = 'gemini-3-flash-preview' 
 LANG = "en"
 NUM_TWEETS_TO_EVALUATE = 15
 
@@ -48,7 +49,7 @@ dev_split = data["dev"]
 # Define our strict output structure using Pydantic.
 # Adding descriptions here actually helps Gemini understand what to extract!
 class PaperExtraction(BaseModel):
-    title: str = Field(description="The exact title of the referenced research paper.")
+    title: str = Field(description="The title of the referenced research paper.")
     authors: str = Field(description="The authors of the paper.")
     keyterms: list[str] = Field(description="A list of 3 to 5 specific, single-word keyterms mentioned.")
 
@@ -104,6 +105,7 @@ def find_best_match(extracted_title, search_terms):
         return None, None, 0
         
     best_match_title = matches[0]
+    print(f"Best title match before kw: {best_match_title}")
     best_pubkey = title_to_pubkey[best_match_title]
     best_abstract = pubkey_to_abstract.get(best_pubkey, "")
     max_matches = count_keyterm_matches(search_terms, best_abstract)
@@ -137,6 +139,7 @@ def evaluate_system(tweets_dataset, num_samples):
         print(f"[{i+1}/{limit}] Tweet: {tweet_text[:100]}...")
         
         # Step 1: Gemini Extraction
+        time.sleep(2)       
         extracted_title, extracted_authors, raw_keyterms = get_llm_extraction(tweet_text)
         
         processed_terms = set()
