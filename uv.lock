@@ -233,6 +233,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "torch" },
+    { name = "tqdm" },
     { name = "transformers" },
 ]
 
@@ -253,6 +254,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "torch", specifier = ">=2.11.0" },
+    { name = "tqdm", specifier = ">=4.67.1" },
     { name = "transformers", specifier = ">=5.3.0" },
 ]
 

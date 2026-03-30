@@ -2,12 +2,14 @@ import argparse
 import json
 import os
 import sys
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
 from dotenv import load_dotenv
 from google.genai import errors
+from tqdm import tqdm
 
 ROOT = Path(__file__).resolve().parent
 SRC = ROOT / "src"
@@ -74,7 +76,12 @@ def _predict_rows(
         rows = rows[:limit]
 
     predictions: list[dict[str, object]] = []
-    for row in rows:
+    for row in tqdm(
+        rows,
+        desc=f"predict {lang}/{split}",
+        unit="tweet",
+        disable=not sys.stderr.isatty(),
+    ):
         top5 = predict_top5_with_embeddings(
             tweet_text=str(row.get("text", "")),
             service=service,
@@ -106,6 +113,7 @@ def _write_predictions(path: Path, rows: list[dict[str, object]]) -> None:
 
 
 def _build_index(args: argparse.Namespace) -> int:
+    start = time.perf_counter()
     config = RetrievalConfig()
     embeddings_path, metadata_path = index_paths(config)
 
@@ -121,8 +129,18 @@ def _build_index(args: argparse.Namespace) -> int:
 
     service = GeminiService(config=config)
     collection = [dict(row) for row in load_collection()]
+    if args.limit_papers is not None:
+        collection = collection[: args.limit_papers]
+        if not collection:
+            raise ValueError("--limit-papers must keep at least one collection row.")
+    iterable = tqdm(
+        collection,
+        desc="build-index metadata",
+        unit="paper",
+        disable=not sys.stderr.isatty(),
+    )
     result = build_or_load_index(
-        collection=collection,
+        collection=[dict(row) for row in iterable],
         service=service,
         config=config,
         force_rebuild=args.force_rebuild,
@@ -131,24 +149,43 @@ def _build_index(args: argparse.Namespace) -> int:
     print(
         f"Index {status}: {result['count']} papers -> {result['embeddings_path']} and {result['metadata_path']}"
     )
+    elapsed = time.perf_counter() - start
+    rate = result["count"] / elapsed if elapsed > 0 else 0.0
+    print(f"Build-index summary: {result['count']} papers in {elapsed:.1f}s ({rate:.2f} papers/s)")
     return 0
 
 
 def _predict(args: argparse.Namespace) -> int:
+    start = time.perf_counter()
     config = RetrievalConfig()
     rows = _predict_rows(config, args.lang, args.split, args.limit)
     output_path = Path(args.output) if args.output else _default_prediction_path(config, args.lang, args.split)
     _write_predictions(output_path, rows)
     print(f"Wrote {len(rows)} predictions to {output_path}")
+    elapsed = time.perf_counter() - start
+    rate = len(rows) / elapsed if elapsed > 0 else 0.0
+    print(f"Predict summary: {len(rows)} tweets in {elapsed:.1f}s ({rate:.2f} tweets/s)")
     return 0
 
 
 def _evaluate(args: argparse.Namespace) -> int:
+    start = time.perf_counter()
     config = RetrievalConfig()
     rows = _predict_rows(config, args.lang, args.split, args.limit)
-    top5_preds = [list(row["top5"]) for row in rows]
+    top5_preds = [
+        list(row["top5"])
+        for row in tqdm(
+            rows,
+            desc="evaluate scoring",
+            unit="tweet",
+            disable=not sys.stderr.isatty(),
+        )
+    ]
     score = scorer(top5_preds, lang=args.lang, split=args.split)
     print(f"MRR@5: {score:.6f} ({len(rows)} queries)")
+    elapsed = time.perf_counter() - start
+    rate = len(rows) / elapsed if elapsed > 0 else 0.0
+    print(f"Evaluate summary: {len(rows)} tweets in {elapsed:.1f}s ({rate:.2f} tweets/s)")
     return 0
 
 
@@ -161,6 +198,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--force-rebuild",
         action="store_true",
         help="Recompute embeddings even when cache artifacts already exist",
+    )
+    build_index.add_argument(
+        "--limit-papers",
+        type=_positive_int,
+        default=None,
+        help="Build index using only the first N collection papers (debugging/smoke runs)",
     )
     build_index.set_defaults(handler=_build_index)
 

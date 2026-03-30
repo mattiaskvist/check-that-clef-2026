@@ -70,3 +70,32 @@ def test_main_returns_1_when_cache_missing(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "RetrievalConfig", lambda: RetrievalConfigModel(cache_dir=str(tmp_path)))
     result = main.main(["predict", "--lang", "en", "--split", "dev", "--limit", "1"])
     assert result == 1
+
+
+def test_build_index_accepts_limit_papers_argument():
+    result = _run_cli("build-index", "--limit-papers", "10", "--help")
+    assert result.returncode == 0
+
+
+def test_build_index_rejects_non_positive_limit_papers():
+    result = _run_cli("build-index", "--limit-papers", "0")
+    assert result.returncode != 0
+    assert "must be >= 1" in result.stderr
+
+
+def test_predict_prints_summary_when_successful(monkeypatch, tmp_path, capsys):
+    root = Path(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    import main
+
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+    monkeypatch.setattr(main, "RetrievalConfig", lambda: RetrievalConfigModel(cache_dir=str(tmp_path)))
+    monkeypatch.setattr(main, "_predict_rows", lambda *_args, **_kwargs: [{"top5": ["1"] * 5} for _ in range(3)])
+    monkeypatch.setattr(main, "_write_predictions", lambda *_args, **_kwargs: None)
+
+    exit_code = main.main(["predict", "--lang", "en", "--split", "dev", "--limit", "3"])
+    captured = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Predict summary:" in captured
