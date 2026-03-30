@@ -9,10 +9,10 @@ Requirements for this milestone, mapped to roadmap phases.
 
 ### Query Understanding
 
-- [ ] **QRY-01**: System extracts structured tweet evidence (claim summary, title mentions, candidate authors, method terms, finding terms) with measurable parse-success rate.
+- [x] **QRY-01**: System extracts structured tweet evidence (claim summary, title mentions, candidate authors, method terms, finding terms) with measurable parse-success rate.
 - [ ] **QRY-02**: System logs and reports query-extraction success/fallback rates so extraction quality regressions are detectable.
 - [ ] **QRY-03**: System uses extracted title fragments and candidate authors in retrieval/ranking signals rather than embedding raw tweet text alone.
-- [ ] **QRY-04**: System supports language-aware query handling for en/de/fr and reports per-language dev MRR@5.
+- [x] **QRY-04**: System supports language-aware query handling for en/de/fr and reports per-language dev MRR@5.
 - [ ] **QRY-05**: System enforces negative constraints from tweets (when present) to reduce obvious false-positive candidates.
 
 ### Ranking Quality
@@ -29,7 +29,7 @@ Requirements for this milestone, mapped to roadmap phases.
 
 ### Operational Efficiency
 
-- [ ] **OPS-01**: System processes prediction/evaluation with batch controls suitable for iterative experiments.
+- [x] **OPS-01**: System processes prediction/evaluation with batch controls suitable for iterative experiments.
 - [ ] **OPS-02**: System keeps query-time model/API usage transparent in CLI output.
 - [ ] **OPS-03**: System stays within practical cost bounds for iterative dev experimentation unless explicitly overridden.
 
@@ -63,10 +63,10 @@ Explicitly excluded for this milestone.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| QRY-01 | 1 - Query Understanding | Pending |
+| QRY-01 | 1 - Query Understanding | Complete |
 | QRY-02 | 1 - Query Understanding | Pending |
 | QRY-03 | 1 - Query Understanding | Pending |
-| QRY-04 | 1 - Query Understanding | Pending |
+| QRY-04 | 1 - Query Understanding | Complete |
 | QRY-05 | 1 - Query Understanding | Pending |
 | RNK-01 | 2 - Semantic Reranking | Pending |
 | RNK-02 | 2 - Semantic Reranking | Pending |
@@ -74,7 +74,7 @@ Explicitly excluded for this milestone.
 | EVAL-01 | 1 - Query Understanding | Pending |
 | EVAL-02 | 1 - Query Understanding | Pending |
 | EVAL-03 | 2 - Semantic Reranking | Pending |
-| OPS-01 | 1 - Query Understanding | Pending |
+| OPS-01 | 1 - Query Understanding | Complete |
 | OPS-02 | 1 - Query Understanding | Pending |
 | OPS-03 | 1 - Query Understanding | Pending |
 

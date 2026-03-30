@@ -62,6 +62,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Query Understanding | 0/TBD | Not started | - |
+| 1. Query Understanding | 1/3 | In Progress|  |
 | 2. Semantic Reranking | 0/TBD | Not started | - |
 | 3. Duplicate Disambiguation | 0/TBD | Not started | - |
