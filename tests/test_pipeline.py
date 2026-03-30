@@ -10,7 +10,11 @@ from clef_retrieval.schemas import TweetEvidence
 
 class SuccessfulExtractor:
     def extract_tweet_evidence(self, tweet_text: str) -> TweetEvidence:
-        return TweetEvidence(query_text_for_embedding=f"structured {tweet_text}")
+        return TweetEvidence(
+            query_text_for_embedding=f"structured {tweet_text}",
+            candidate_title_mentions=["structured title"],
+            candidate_authors=["structured author"],
+        )
 
 
 class FailingExtractor:
@@ -32,7 +36,11 @@ class FakeService:
         self.seen_queries: list[str] = []
 
     def extract_tweet_evidence(self, tweet_text: str) -> TweetEvidence:
-        return TweetEvidence(query_text_for_embedding=tweet_text)
+        return TweetEvidence(
+            query_text_for_embedding=tweet_text,
+            candidate_title_mentions=["science claim"],
+            candidate_authors=["author"],
+        )
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         self.seen_queries.extend(texts)
