@@ -12,7 +12,7 @@ This roadmap delivers measurable MRR@5 improvements over the current baseline th
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Query Understanding** - Extract and utilize rich signals from tweets for retrieval
+- [x] **Phase 1: Query Understanding** - Extract and utilize rich signals from tweets for retrieval (completed 2026-03-30)
 - [ ] **Phase 2: Semantic Reranking** - Replace lexical reranking with multilingual cross-encoder
 - [ ] **Phase 3: Duplicate Disambiguation** - Handle duplicate-title papers with multi-signal matching
 
@@ -62,6 +62,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Query Understanding | 1/3 | In Progress|  |
+| 1. Query Understanding | 3/3 | Complete   | 2026-03-30 |
 | 2. Semantic Reranking | 0/TBD | Not started | - |
 | 3. Duplicate Disambiguation | 0/TBD | Not started | - |

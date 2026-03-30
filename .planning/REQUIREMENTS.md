@@ -23,15 +23,15 @@ Requirements for this milestone, mapped to roadmap phases.
 
 ### Evaluation and Experimentation
 
-- [ ] **EVAL-01**: System can evaluate from cached prediction files without recomputing embeddings/LLM calls unless explicitly requested.
-- [ ] **EVAL-02**: System records baseline and experiment metrics (overall + per-language) for reproducible comparison.
+- [x] **EVAL-01**: System can evaluate from cached prediction files without recomputing embeddings/LLM calls unless explicitly requested.
+- [x] **EVAL-02**: System records baseline and experiment metrics (overall + per-language) for reproducible comparison.
 - [ ] **EVAL-03**: System provides stage-level diagnostics (retrieval recall-at-K and reranking uplift indicators) to localize bottlenecks.
 
 ### Operational Efficiency
 
 - [x] **OPS-01**: System processes prediction/evaluation with batch controls suitable for iterative experiments.
-- [ ] **OPS-02**: System keeps query-time model/API usage transparent in CLI output.
-- [ ] **OPS-03**: System stays within practical cost bounds for iterative dev experimentation unless explicitly overridden.
+- [x] **OPS-02**: System keeps query-time model/API usage transparent in CLI output.
+- [x] **OPS-03**: System stays within practical cost bounds for iterative dev experimentation unless explicitly overridden.
 
 ## v2 Requirements
 
@@ -71,12 +71,12 @@ Explicitly excluded for this milestone.
 | RNK-01 | 2 - Semantic Reranking | Pending |
 | RNK-02 | 2 - Semantic Reranking | Pending |
 | RNK-03 | 3 - Duplicate Disambiguation | Pending |
-| EVAL-01 | 1 - Query Understanding | Pending |
-| EVAL-02 | 1 - Query Understanding | Pending |
+| EVAL-01 | 1 - Query Understanding | Complete |
+| EVAL-02 | 1 - Query Understanding | Complete |
 | EVAL-03 | 2 - Semantic Reranking | Pending |
 | OPS-01 | 1 - Query Understanding | Complete |
-| OPS-02 | 1 - Query Understanding | Pending |
-| OPS-03 | 1 - Query Understanding | Pending |
+| OPS-02 | 1 - Query Understanding | Complete |
+| OPS-03 | 1 - Query Understanding | Complete |
 
 **Coverage:**
 - v1 requirements: 14 total
