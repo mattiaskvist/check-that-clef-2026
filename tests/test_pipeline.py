@@ -1,4 +1,5 @@
 from clef_retrieval.pipeline import (
+    build_query_embedding_text_with_metadata,
     build_query_embedding_text,
     ensure_top5,
     predict_top5_with_embeddings,
@@ -15,6 +16,15 @@ class SuccessfulExtractor:
 class FailingExtractor:
     def extract_tweet_evidence(self, tweet_text: str):
         raise ValueError("parse failure")
+
+
+class WeakExtractor:
+    def extract_tweet_evidence(self, tweet_text: str) -> TweetEvidence:
+        return TweetEvidence(
+            query_text_for_embedding=f"structured {tweet_text}",
+            candidate_title_mentions=["possible title"],
+            candidate_authors=[],
+        )
 
 
 class FakeService:
@@ -51,6 +61,20 @@ def test_build_query_embedding_text_falls_back_to_raw_tweet_on_failure():
     value = build_query_embedding_text("raw tweet", FailingExtractor())
 
     assert value == "raw tweet"
+
+
+def test_build_query_embedding_text_rejects_parsed_but_weak_evidence():
+    value = build_query_embedding_text("raw tweet", WeakExtractor())
+
+    assert value == "raw tweet"
+
+
+def test_build_query_embedding_text_with_metadata_labels_weak_extraction_as_rejected():
+    value, outcome, evidence = build_query_embedding_text_with_metadata("raw tweet", WeakExtractor())
+
+    assert value == "raw tweet"
+    assert outcome == "parsed+rejected"
+    assert evidence is not None
 
 
 def test_predict_top5_with_embeddings_returns_ranked_values_and_pads():
