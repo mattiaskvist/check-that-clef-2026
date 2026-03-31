@@ -43,6 +43,7 @@ The workflow is experimentation-heavy and metric-driven. The user priority is qu
 - **Evaluation Target**: Dev MRR@5 vs in-repo baseline — progress must be measured against this metric
 - **Data Boundary**: Existing CLEF dataset splits only — no new external dataset ingestion for this initiative
 - **Cost Awareness**: Initial spend cap around 200 SEK — improvements should be mindful of API usage and query-time overhead
+- **Experiment Loop**: Full prediction runs are expensive/slow due to query-time LLM generation — default to subset-first predict/evaluate iterations before full-split validation
 
 ## Key Decisions
 
