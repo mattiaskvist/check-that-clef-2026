@@ -4,6 +4,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+# Supported semantic reranker backends (D-01)
+RerankerBackend = Literal["jina_v2", "bge_v2_m3"]
+
 
 class RetrievalConfig(BaseModel):
     embedding_model: str = Field(default="models/gemini-embedding-2-preview")
@@ -26,6 +29,19 @@ class RetrievalConfig(BaseModel):
     language_normalization_mode: Literal["strict"] = "strict"
     subset_seed: int = Field(default=42)
     subset_per_language_limit: int = Field(default=100, ge=1)
+
+    # Semantic reranker configuration (Phase 2)
+    # D-02: Default to jina_v2 backend
+    reranker_backend: RerankerBackend = Field(default="jina_v2")
+    # D-03: Rerank top 50 dense-retrieval candidates per query
+    rerank_top_k: int = Field(default=50, ge=1)
+    # Tie-break epsilon for semantic score equivalence
+    semantic_tie_epsilon: float = Field(default=0.01, gt=0.0)
+    # Backend-specific model identifiers
+    jina_reranker_model: str = Field(
+        default="jinaai/jina-reranker-v2-base-multilingual"
+    )
+    bge_reranker_model: str = Field(default="BAAI/bge-reranker-v2-m3")
 
     @model_validator(mode="after")
     def validate_policy_ordering(self) -> "RetrievalConfig":
