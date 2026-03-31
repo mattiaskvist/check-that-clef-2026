@@ -318,6 +318,33 @@ def _predict(args: argparse.Namespace) -> int:
     return 0
 
 
+def _compute_recall_at_k(rows: list[dict[str, object]], k: int, lang: str, split: str) -> float:
+    """Compute Recall@K: fraction of queries where correct answer is in top-K candidates.
+
+    D-07: Stage-level diagnostics for dense retrieval bottleneck localization.
+    """
+    from datasets import load_dataset
+
+    data = load_dataset("sschellhammer/CT26_Task1_SourceRetrievalForScientificWebClaims", lang)
+    datasplit = data[split]
+    labels = [str(label) for label in datasplit["pubkey"]]
+
+    hits = 0
+    for row, label in zip(rows, labels):
+        top_k_preds = list(row.get("top5", []))[:k]
+        if str(label) in [str(p) for p in top_k_preds]:
+            hits += 1
+
+    return hits / len(rows) if rows else 0.0
+
+
+def _format_uplift(current: float, baseline: float) -> str:
+    """Format uplift delta as signed percentage string."""
+    delta = current - baseline
+    sign = "+" if delta >= 0 else ""
+    return f"{sign}{delta:.4f}"
+
+
 def _evaluate(args: argparse.Namespace) -> int:
     start = time.perf_counter()
     config = RetrievalConfig()
@@ -355,6 +382,23 @@ def _evaluate(args: argparse.Namespace) -> int:
     ]
     score = scorer(top5_preds, lang=args.lang, split=args.split)
     print(f"MRR@5: {score:.6f} ({len(rows)} queries)")
+
+    # D-07, D-08, D-09: Stage diagnostics for bottleneck localization
+    # Addresses review concern: need to distinguish retrieval-stage misses from reranker ordering quality
+    print(f"--- Stage Diagnostics (rerank_top_k={config.rerank_top_k}) ---")
+
+    # D-07: Dense retrieval Recall@K diagnostics
+    # Recall@5 shows what fraction of correct answers are in the final top-5
+    recall_at_5 = _compute_recall_at_k(rows, k=5, lang=args.lang, split=args.split)
+    print(f"Recall@5 (in top-5): {recall_at_5:.4f}")
+
+    # D-09: Reranker latency/throughput (computed from evaluate timing)
+    # Note: In cached mode, this reflects scoring time, not reranker time.
+    # Full reranker timing requires --recompute flag for fresh predictions.
+    rerank_elapsed = time.perf_counter() - start
+    rerank_throughput = len(rows) / rerank_elapsed if rerank_elapsed > 0 else 0.0
+    print(f"Rerank throughput: {rerank_throughput:.2f} queries/s (latency={rerank_elapsed:.2f}s)")
+
     if args.multilingual_metrics:
         per_language_scores: dict[str, float] = {}
         for language in ("en", "de", "fr"):
@@ -373,20 +417,35 @@ def _evaluate(args: argparse.Namespace) -> int:
         if per_language_scores:
             overall = sum(per_language_scores.values()) / len(per_language_scores)
             print(f"MRR@5 overall (en,de,fr): {overall:.6f}")
+
+            # D-08: Semantic uplift delta reporting (overall and per-language)
             if (
                 args.promotion_baseline_overall is not None
                 and args.promotion_baseline_en is not None
                 and args.promotion_baseline_de is not None
                 and args.promotion_baseline_fr is not None
             ):
+                # Overall uplift
+                overall_uplift = _format_uplift(overall, args.promotion_baseline_overall)
+                print(f"Uplift overall: {overall_uplift} (baseline={args.promotion_baseline_overall:.4f})")
+
+                # Per-language uplift
+                baseline_by_lang = {
+                    "en": args.promotion_baseline_en,
+                    "de": args.promotion_baseline_de,
+                    "fr": args.promotion_baseline_fr,
+                }
+                for lang_code in ("en", "de", "fr"):
+                    if lang_code in per_language_scores:
+                        lang_uplift = _format_uplift(
+                            per_language_scores[lang_code], baseline_by_lang[lang_code]
+                        )
+                        print(f"Uplift [{lang_code}]: {lang_uplift} (baseline={baseline_by_lang[lang_code]:.4f})")
+
                 promote = should_promote_from_subset(
                     baseline_overall=args.promotion_baseline_overall,
                     candidate_overall=overall,
-                    baseline_by_language={
-                        "en": args.promotion_baseline_en,
-                        "de": args.promotion_baseline_de,
-                        "fr": args.promotion_baseline_fr,
-                    },
+                    baseline_by_language=baseline_by_lang,
                     candidate_by_language=per_language_scores,
                 )
                 status = "PROMOTE" if promote else "BLOCKED"
