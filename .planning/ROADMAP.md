@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Query Understanding** - Extract and utilize rich signals from tweets for retrieval (completed 2026-03-30)
 - [x] **Phase 2: Semantic Reranking** - Replace lexical reranking with multilingual cross-encoder (completed 2026-03-31)
-- [ ] **Phase 3: Duplicate Disambiguation** - Handle duplicate-title papers with multi-signal matching
+- [x] **Phase 3: Duplicate Disambiguation** - Handle duplicate-title papers with multi-signal matching (completed 2026-03-31)
 
 ## Phase Details
 
@@ -56,7 +56,9 @@ Plans:
   1. System detects duplicate-title candidates in retrieval results
   2. System uses author names, method terms, and venue/year information to disambiguate duplicate titles
   3. System reduces duplicate-title ranking errors measurably on dev set queries affected by title collisions
-**Plans**: TBD
+**Plans**: 1 plan
+Plans:
+- [x] 03-01-PLAN.md — Implement lazy collision detection with multi-signal disambiguation (author > method/finding > venue priority)
 
 ## Progress
 
@@ -67,4 +69,4 @@ Phases execute in numeric order: 1 → 2 → 3
 |-------|----------------|--------|-----------|
 | 1. Query Understanding | 3/3 | Complete   | 2026-03-30 |
 | 2. Semantic Reranking | 2/2 | Complete   | 2026-03-31 |
-| 3. Duplicate Disambiguation | 0/TBD | Not started | - |
+| 3. Duplicate Disambiguation | 1/1 | Complete   | 2026-03-31 |
