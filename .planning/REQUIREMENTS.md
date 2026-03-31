@@ -25,7 +25,7 @@ Requirements for this milestone, mapped to roadmap phases.
 
 - [x] **EVAL-01**: System can evaluate from cached prediction files without recomputing embeddings/LLM calls unless explicitly requested.
 - [x] **EVAL-02**: System records baseline and experiment metrics (overall + per-language) for reproducible comparison.
-- [ ] **EVAL-03**: System provides stage-level diagnostics (retrieval recall-at-K and reranking uplift indicators) to localize bottlenecks.
+- [x] **EVAL-03**: System provides stage-level diagnostics (retrieval recall-at-K and reranking uplift indicators) to localize bottlenecks.
 
 ### Operational Efficiency
 
@@ -73,7 +73,7 @@ Explicitly excluded for this milestone.
 | RNK-03 | 3 - Duplicate Disambiguation | Pending |
 | EVAL-01 | 1 - Query Understanding | Complete |
 | EVAL-02 | 1 - Query Understanding | Complete |
-| EVAL-03 | 2 - Semantic Reranking | Pending |
+| EVAL-03 | 2 - Semantic Reranking | Complete |
 | OPS-01 | 1 - Query Understanding | Complete |
 | OPS-02 | 1 - Query Understanding | Complete |
 | OPS-03 | 1 - Query Understanding | Complete |

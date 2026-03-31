@@ -13,7 +13,7 @@ This roadmap delivers measurable MRR@5 improvements over the current baseline th
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Query Understanding** - Extract and utilize rich signals from tweets for retrieval (completed 2026-03-30)
-- [ ] **Phase 2: Semantic Reranking** - Replace lexical reranking with multilingual cross-encoder
+- [x] **Phase 2: Semantic Reranking** - Replace lexical reranking with multilingual cross-encoder (completed 2026-03-31)
 - [ ] **Phase 3: Duplicate Disambiguation** - Handle duplicate-title papers with multi-signal matching
 
 ## Phase Details
@@ -46,7 +46,7 @@ Plans:
 **Plans**: 2 plans
 Plans:
 - [x] 02-01-PLAN.md — Implement backend-swappable semantic reranking integration with semantic-primary ordering and weighted tie-break.
-- [ ] 02-02-PLAN.md — Add stage diagnostics (Recall@K, uplift overall/per-language, latency/throughput) in evaluate output.
+- [x] 02-02-PLAN.md — Add stage diagnostics (Recall@K, uplift overall/per-language, latency/throughput) in evaluate output.
 
 ### Phase 3: Duplicate Disambiguation
 **Goal**: System correctly ranks papers with duplicate titles using multi-signal matching
@@ -66,5 +66,5 @@ Phases execute in numeric order: 1 → 2 → 3
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Query Understanding | 3/3 | Complete   | 2026-03-30 |
-| 2. Semantic Reranking | 1/2 | In Progress|  |
+| 2. Semantic Reranking | 2/2 | Complete   | 2026-03-31 |
 | 3. Duplicate Disambiguation | 0/TBD | Not started | - |
