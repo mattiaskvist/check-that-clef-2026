@@ -9,6 +9,7 @@ from google.genai import errors
 from pydantic import ValidationError
 
 from .config import RetrievalConfig
+from .disambiguation import disambiguate_title_collisions
 from .gemini_client import GeminiService, build_embedding_input
 from .query_policy import extraction_gate_passes, normalize_tokens_for_language
 from .reranker import clip_top5, semantic_primary_sort
@@ -333,6 +334,15 @@ def rank_from_query_embedding(
 
     # Extract pubkeys in sorted order
     reranked = [item[0] for item in sorted_candidates]
+
+    # Phase 3: Disambiguation for duplicate titles (D-01 through D-06)
+    if evidence is not None:
+        reranked = disambiguate_title_collisions(
+            candidates=reranked,
+            evidence=evidence,
+            metadata_by_pubkey=metadata_by_pubkey,
+            config=cfg,
+        )
 
     # Append remaining candidates (not reranked) in original dense order
     final_order = reranked + remaining_candidates
