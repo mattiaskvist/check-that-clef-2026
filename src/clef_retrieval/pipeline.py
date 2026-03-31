@@ -11,7 +11,7 @@ from pydantic import ValidationError
 from .config import RetrievalConfig
 from .gemini_client import GeminiService, build_embedding_input
 from .query_policy import extraction_gate_passes, normalize_tokens_for_language
-from .reranker import clip_top5
+from .reranker import clip_top5, semantic_primary_sort
 from .retriever import retrieve_top_pubkeys
 from .schemas import TweetEvidence
 
@@ -117,6 +117,56 @@ def weighted_signal_rerank(
     return [pubkey for pubkey, _ in sorted(((p, score(p)) for p in candidates), key=lambda item: item[1], reverse=True)]
 
 
+def _compute_weighted_scores(
+    candidates: Sequence[str],
+    metadata_by_pubkey: dict[str, dict],
+    evidence: TweetEvidence | None,
+    config: RetrievalConfig,
+) -> dict[str, float]:
+    """Compute Phase 1 weighted signal scores for all candidates.
+
+    Used as tie-break signal when semantic scores are equal.
+
+    Returns:
+        Dict mapping pubkey to weighted score
+    """
+    if evidence is None:
+        # No evidence = lexical fallback (simple overlap score)
+        return {pubkey: 0.0 for pubkey in candidates}
+
+    title_author_terms, method_finding_terms, keyword_terms, negative_terms, language = _normalize_evidence_terms(evidence, config)
+
+    scores = {}
+    for pubkey in candidates:
+        row = metadata_by_pubkey.get(pubkey, {})
+        doc_tokens = normalize_tokens_for_language(
+            [
+                str(row.get("title", "")),
+                str(row.get("authors", "")),
+                str(row.get("abstract", "")),
+                *_as_string_list(row.get("keywords", [])),
+                *_as_string_list(row.get("method_terms", [])),
+                *_as_string_list(row.get("finding_terms", [])),
+            ],
+            language,
+        )
+        doc_text = " ".join(doc_tokens)
+        title_author_matches = sum(1 for term in title_author_terms if term and term in doc_text)
+        method_finding_matches = sum(1 for term in method_finding_terms if term and term in doc_text)
+        keyword_matches = sum(1 for term in keyword_terms if term and term in doc_text)
+        negative_matches = sum(1 for term in negative_terms if term and term in doc_text)
+
+        weighted_score = (
+            config.weight_title_author * title_author_matches
+            + config.weight_method_finding * method_finding_matches
+            + config.weight_keywords * keyword_matches
+            - ((config.weight_title_author + config.weight_method_finding) * negative_matches)
+        )
+        scores[pubkey] = weighted_score
+
+    return scores
+
+
 def stage2_rerank(
     tweet_text: str,
     candidates: Sequence[str],
@@ -191,27 +241,100 @@ def rank_from_query_embedding(
     top_k: int,
     evidence: TweetEvidence | None = None,
     config: RetrievalConfig | None = None,
+    semantic_reranker=None,
 ) -> list[str]:
+    """Rank papers for a query embedding using dense retrieval + semantic reranking.
+
+    Phase 2 behavior (D-05, D-06):
+    1. Retrieve top_k candidates from dense similarity
+    2. Apply semantic reranking to top rerank_top_k candidates
+    3. Sort by semantic score (primary), weighted score (tie-break), original index (fallback)
+    4. Return top 5 results
+
+    Args:
+        tweet_text: Original tweet text for reranking
+        query_embedding: Query embedding vector
+        paper_embeddings: Paper embedding matrix
+        metadata_rows: List of paper metadata dicts
+        top_k: Number of dense retrieval candidates
+        evidence: Extracted tweet evidence (optional, for weighted scoring)
+        config: Retrieval configuration
+        semantic_reranker: Optional SemanticReranker instance (uses MockReranker if None)
+
+    Returns:
+        List of 5 pubkeys in ranked order
+    """
     cfg = config or RetrievalConfig()
     pubkeys = [str(row.get("pubkey", "")) for row in metadata_rows]
+
+    # Stage 1: Dense retrieval
     candidates = retrieve_top_pubkeys(
         query_embedding=query_embedding,
         paper_embeddings=paper_embeddings,
         pubkeys=pubkeys,
         k=top_k,
     )
+
+    if not candidates:
+        return ensure_top5([])
+
     metadata_by_pubkey = {str(row.get("pubkey", "")): row for row in metadata_rows}
-    rerank_impl = _lexical_rerank
-    if evidence is not None:
-        rerank_impl = lambda text, cands, row_map: weighted_signal_rerank(  # noqa: E731
-            text,
-            cands,
-            row_map,
-            evidence=evidence,
-            config=cfg,
+
+    # Stage 2: Semantic reranking on top rerank_top_k candidates
+    rerank_candidates = candidates[: cfg.rerank_top_k]
+    remaining_candidates = candidates[cfg.rerank_top_k :]
+
+    # Get semantic scores
+    if semantic_reranker is not None:
+        semantic_scores = dict(
+            semantic_reranker.score_candidates(
+                query=tweet_text,
+                candidates=rerank_candidates,
+                metadata_by_pubkey=metadata_by_pubkey,
+            )
         )
-    return stage2_rerank(
-        tweet_text,
-        candidates,
-        rerank_fn=lambda text, cands: rerank_impl(text, cands, metadata_by_pubkey),
+    else:
+        # Fallback: use mock scores based on dense retrieval order
+        # This preserves Phase 1 behavior when no semantic reranker is available
+        from .reranker import MockReranker
+
+        mock = MockReranker()
+        semantic_scores = dict(
+            mock.score_candidates(
+                query=tweet_text,
+                candidates=rerank_candidates,
+                metadata_by_pubkey=metadata_by_pubkey,
+            )
+        )
+
+    # Get weighted scores for tie-breaking
+    weighted_scores = _compute_weighted_scores(
+        candidates=rerank_candidates,
+        metadata_by_pubkey=metadata_by_pubkey,
+        evidence=evidence,
+        config=cfg,
     )
+
+    # Build candidates with all scores: (pubkey, semantic, weighted, original_index)
+    candidates_with_scores = [
+        (
+            pubkey,
+            semantic_scores.get(pubkey, 0.0),
+            weighted_scores.get(pubkey, 0.0),
+            idx,
+        )
+        for idx, pubkey in enumerate(rerank_candidates)
+    ]
+
+    # Sort with semantic-primary, weighted tie-break, original index fallback
+    sorted_candidates = semantic_primary_sort(
+        candidates_with_scores, cfg.semantic_tie_epsilon
+    )
+
+    # Extract pubkeys in sorted order
+    reranked = [item[0] for item in sorted_candidates]
+
+    # Append remaining candidates (not reranked) in original dense order
+    final_order = reranked + remaining_candidates
+
+    return ensure_top5(clip_top5(final_order))
