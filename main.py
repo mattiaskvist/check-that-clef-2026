@@ -322,6 +322,9 @@ def _compute_recall_at_k(rows: list[dict[str, object]], k: int, lang: str, split
     """Compute Recall@K: fraction of queries where correct answer is in top-K candidates.
 
     D-07: Stage-level diagnostics for dense retrieval bottleneck localization.
+    This metric answers: "Is the correct paper even in the candidate set?"
+    If Recall@K is low, retrieval is the bottleneck (not reranking).
+    If Recall@K is high but MRR@5 is low, reranking is the bottleneck.
     """
     from datasets import load_dataset
 
@@ -345,11 +348,23 @@ def _format_uplift(current: float, baseline: float) -> str:
     return f"{sign}{delta:.4f}"
 
 
+def _print_diagnostics_header(config: RetrievalConfig, is_cached: bool) -> None:
+    """Print stage diagnostics header with configuration context.
+
+    D-07, D-08, D-09: Stage diagnostics address review concern about
+    bottleneck localization ambiguity — users need to know whether poor
+    MRR@5 comes from retrieval misses or reranker ordering issues.
+    """
+    mode_label = "cached" if is_cached else "recompute"
+    print(f"--- Stage Diagnostics (rerank_top_k={config.rerank_top_k}, mode={mode_label}) ---")
+
+
 def _evaluate(args: argparse.Namespace) -> int:
     start = time.perf_counter()
     config = RetrievalConfig()
     prediction_path = Path(args.predictions) if args.predictions else _default_prediction_path(config, args.lang, args.split)
-    if prediction_path.exists() and not args.recompute:
+    is_cached_mode = prediction_path.exists() and not args.recompute
+    if is_cached_mode:
         print(f"Using cached predictions from {prediction_path}")
         rows = _read_predictions(prediction_path)
         if args.limit is not None:
@@ -385,19 +400,21 @@ def _evaluate(args: argparse.Namespace) -> int:
 
     # D-07, D-08, D-09: Stage diagnostics for bottleneck localization
     # Addresses review concern: need to distinguish retrieval-stage misses from reranker ordering quality
-    print(f"--- Stage Diagnostics (rerank_top_k={config.rerank_top_k}) ---")
+    _print_diagnostics_header(config, is_cached_mode)
 
     # D-07: Dense retrieval Recall@K diagnostics
     # Recall@5 shows what fraction of correct answers are in the final top-5
+    # This is a proxy for rerank quality when run on cached predictions
     recall_at_5 = _compute_recall_at_k(rows, k=5, lang=args.lang, split=args.split)
     print(f"Recall@5 (in top-5): {recall_at_5:.4f}")
 
     # D-09: Reranker latency/throughput (computed from evaluate timing)
-    # Note: In cached mode, this reflects scoring time, not reranker time.
-    # Full reranker timing requires --recompute flag for fresh predictions.
+    # Note: In cached mode, this reflects scoring time only (no reranker calls).
+    # For accurate reranker timing, use --recompute flag to force fresh predictions.
     rerank_elapsed = time.perf_counter() - start
     rerank_throughput = len(rows) / rerank_elapsed if rerank_elapsed > 0 else 0.0
-    print(f"Rerank throughput: {rerank_throughput:.2f} queries/s (latency={rerank_elapsed:.2f}s)")
+    latency_label = "eval_latency" if is_cached_mode else "rerank_latency"
+    print(f"Rerank throughput: {rerank_throughput:.2f} queries/s ({latency_label}={rerank_elapsed:.2f}s)")
 
     if args.multilingual_metrics:
         per_language_scores: dict[str, float] = {}

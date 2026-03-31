@@ -149,9 +149,10 @@ def test_evaluate_diagnostics_stable_in_cached_mode(monkeypatch, tmp_path, capsy
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    # Must include diagnostic sections even in cached mode
-    assert "Recall@" in output or "rerank_top_k" in output.lower(), \
-        "Expected diagnostics labels in cached evaluate output"
+    # Must include diagnostic sections with mode label even in cached mode
+    assert "mode=cached" in output, "Expected mode=cached in diagnostics header"
+    assert "Recall@" in output, "Expected Recall@K diagnostics in cached mode"
+    assert "rerank_top_k" in output.lower(), "Expected rerank_top_k readout in diagnostics"
 
 
 def test_evaluate_recalls_rerank_depth_readout(monkeypatch, tmp_path, capsys):
@@ -171,8 +172,26 @@ def test_evaluate_recalls_rerank_depth_readout(monkeypatch, tmp_path, capsys):
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    # Should show rerank depth (D-04: explicit config/CLI-controlled parameter)
-    # Look for "rerank" or "depth" or the actual number 50
-    output_lower = output.lower()
-    assert "rerank" in output_lower or "depth" in output_lower or "50" in output, \
-        "Expected rerank depth readout in diagnostics"
+    # D-04: Explicit rerank depth parameter in diagnostics for experiment comparability
+    assert "rerank_top_k=50" in output, "Expected rerank_top_k=50 in diagnostics header"
+
+
+def test_evaluate_latency_label_reflects_mode(monkeypatch, tmp_path, capsys):
+    """Latency label changes based on cached vs recompute mode for clarity."""
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    (cache_dir / "predictions_en_dev.jsonl").write_text(
+        '{"index": 0, "text": "tweet", "pubkey": "1", "top5": ["1", "2", "3", "4", "5"]}\n',
+        encoding="utf-8",
+    )
+
+    config_cls = main.RetrievalConfig
+    monkeypatch.setattr(main, "RetrievalConfig", lambda: config_cls.model_construct(cache_dir=str(cache_dir)))
+    monkeypatch.setattr(main, "scorer", lambda _preds, lang, split: 0.25)
+
+    exit_code = main.main(["evaluate", "--lang", "en", "--split", "dev"])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    # In cached mode, latency label should indicate eval_latency (not rerank_latency)
+    assert "eval_latency" in output, "Expected eval_latency label in cached mode"
