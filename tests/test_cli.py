@@ -50,7 +50,8 @@ def test_main_returns_2_when_gemini_key_missing(monkeypatch):
         sys.path.insert(0, str(root))
     import main
 
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    # Keep var explicitly empty so load_dotenv() cannot repopulate from local .env
+    monkeypatch.setenv("GEMINI_API_KEY", "")
     monkeypatch.setattr(
         main,
         "index_paths",
