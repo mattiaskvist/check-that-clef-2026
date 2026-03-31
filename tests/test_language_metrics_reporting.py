@@ -86,3 +86,113 @@ def test_evaluate_promotion_gate_blocks_regression(monkeypatch, tmp_path, capsys
 
     assert exit_code == 0
     assert "Promotion gate: BLOCKED" in output
+
+
+def test_evaluate_promotion_gate_promotes_when_all_languages_improve(monkeypatch, tmp_path, capsys):
+    """Phase 1 compatibility: Promotion gate allows when overall and all languages improve."""
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    for lang in ("en", "de", "fr"):
+        (cache_dir / f"predictions_{lang}_dev.jsonl").write_text(
+            '{"index": 0, "text": "tweet", "pubkey": "1", "top5": ["1", "2", "3", "4", "5"]}\n',
+            encoding="utf-8",
+        )
+
+    config_cls = main.RetrievalConfig
+    monkeypatch.setattr(main, "RetrievalConfig", lambda: config_cls.model_construct(cache_dir=str(cache_dir)))
+    # All languages improve over baseline
+    monkeypatch.setattr(
+        main,
+        "scorer",
+        lambda _preds, lang, split: {"en": 0.35, "de": 0.32, "fr": 0.38}[lang],
+    )
+
+    exit_code = main.main(
+        [
+            "evaluate",
+            "--lang",
+            "en",
+            "--split",
+            "dev",
+            "--multilingual-metrics",
+            "--promotion-baseline-overall",
+            "0.25",
+            "--promotion-baseline-en",
+            "0.30",
+            "--promotion-baseline-de",
+            "0.28",
+            "--promotion-baseline-fr",
+            "0.30",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Promotion gate: PROMOTE" in output
+
+
+def test_evaluate_subset_first_semantics_preserved(monkeypatch, tmp_path, capsys):
+    """Phase 1 compatibility: Subset-first experiment workflow produces consistent output."""
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    (cache_dir / "predictions_en_dev.jsonl").write_text(
+        '{"index": 0, "text": "tweet", "pubkey": "1", "top5": ["1", "2", "3", "4", "5"]}\n',
+        encoding="utf-8",
+    )
+
+    config_cls = main.RetrievalConfig
+    monkeypatch.setattr(main, "RetrievalConfig", lambda: config_cls.model_construct(cache_dir=str(cache_dir)))
+    monkeypatch.setattr(main, "scorer", lambda _preds, lang, split: 0.25)
+
+    exit_code = main.main(["evaluate", "--lang", "en", "--split", "dev"])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    # Phase 1 semantics: MRR@5 score line format preserved
+    assert "MRR@5:" in output
+    # Evaluate summary format preserved
+    assert "Evaluate summary:" in output
+
+
+def test_evaluate_no_language_regression_messaging_unchanged(monkeypatch, tmp_path, capsys):
+    """Phase 1 compatibility: No-language-regression promotion message format unchanged."""
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    for lang in ("en", "de", "fr"):
+        (cache_dir / f"predictions_{lang}_dev.jsonl").write_text(
+            '{"index": 0, "text": "tweet", "pubkey": "1", "top5": ["1", "2", "3", "4", "5"]}\n',
+            encoding="utf-8",
+        )
+
+    config_cls = main.RetrievalConfig
+    monkeypatch.setattr(main, "RetrievalConfig", lambda: config_cls.model_construct(cache_dir=str(cache_dir)))
+    # DE regresses slightly
+    monkeypatch.setattr(
+        main,
+        "scorer",
+        lambda _preds, lang, split: {"en": 0.35, "de": 0.24, "fr": 0.38}[lang],
+    )
+
+    exit_code = main.main(
+        [
+            "evaluate",
+            "--lang",
+            "en",
+            "--split",
+            "dev",
+            "--multilingual-metrics",
+            "--promotion-baseline-overall",
+            "0.25",
+            "--promotion-baseline-en",
+            "0.30",
+            "--promotion-baseline-de",
+            "0.25",
+            "--promotion-baseline-fr",
+            "0.30",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    # Phase 1 blocking message format preserved (DE regressed)
+    assert "Promotion gate: BLOCKED" in output
