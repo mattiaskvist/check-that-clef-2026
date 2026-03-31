@@ -17,8 +17,8 @@ Requirements for this milestone, mapped to roadmap phases.
 
 ### Ranking Quality
 
-- [ ] **RNK-01**: System replaces or augments lexical-only reranking with semantic reranking over top-K dense candidates.
-- [ ] **RNK-02**: System reranking strategy preserves or improves multilingual behavior across en/de/fr.
+- [x] **RNK-01**: System replaces or augments lexical-only reranking with semantic reranking over top-K dense candidates.
+- [x] **RNK-02**: System reranking strategy preserves or improves multilingual behavior across en/de/fr.
 - [ ] **RNK-03**: System handles duplicate-title candidate disambiguation using additional signals (author/method/venue) where available.
 
 ### Evaluation and Experimentation
@@ -68,8 +68,8 @@ Explicitly excluded for this milestone.
 | QRY-03 | 1 - Query Understanding | Complete |
 | QRY-04 | 1 - Query Understanding | Complete |
 | QRY-05 | 1 - Query Understanding | Complete |
-| RNK-01 | 2 - Semantic Reranking | Pending |
-| RNK-02 | 2 - Semantic Reranking | Pending |
+| RNK-01 | 2 - Semantic Reranking | Complete |
+| RNK-02 | 2 - Semantic Reranking | Complete |
 | RNK-03 | 3 - Duplicate Disambiguation | Pending |
 | EVAL-01 | 1 - Query Understanding | Complete |
 | EVAL-02 | 1 - Query Understanding | Complete |

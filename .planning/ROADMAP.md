@@ -43,7 +43,10 @@ Plans:
   1. System integrates multilingual cross-encoder (Jina Reranker v2 or BGE v2-m3) to rerank dense retrieval candidates
   2. System preserves or improves MRR@5 across all three languages (en/de/fr) compared to lexical baseline
   3. System provides stage-level diagnostics showing retrieval recall-at-K and reranking uplift to localize bottlenecks
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [x] 02-01-PLAN.md — Implement backend-swappable semantic reranking integration with semantic-primary ordering and weighted tie-break.
+- [ ] 02-02-PLAN.md — Add stage diagnostics (Recall@K, uplift overall/per-language, latency/throughput) in evaluate output.
 
 ### Phase 3: Duplicate Disambiguation
 **Goal**: System correctly ranks papers with duplicate titles using multi-signal matching
@@ -63,5 +66,5 @@ Phases execute in numeric order: 1 → 2 → 3
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Query Understanding | 3/3 | Complete   | 2026-03-30 |
-| 2. Semantic Reranking | 0/TBD | Not started | - |
+| 2. Semantic Reranking | 1/2 | In Progress|  |
 | 3. Duplicate Disambiguation | 0/TBD | Not started | - |
