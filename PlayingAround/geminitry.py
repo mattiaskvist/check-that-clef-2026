@@ -4,18 +4,17 @@ from datasets import load_dataset
 from google import genai
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
+import time
 
 # ==========================================
 # Configuration
 # ==========================================
 # We use Gemini 2.5 Flash, which is incredibly fast and cheap/free for this volume
-MODEL_NAME = 'gemini-2.5-flash' 
+MODEL_NAME = 'gemini-3-flash-preview' 
 LANG = "en"
 NUM_TWEETS_TO_EVALUATE = 15
 
 load_dotenv()
-
-# The Google SDK automatically looks for the GEMINI_API_KEY environment variable
 
 client = genai.Client()
 
@@ -45,35 +44,31 @@ dev_split = data["dev"]
 # Core Functions
 # ==========================================
 
-# Define our strict output structure using Pydantic.
-# Adding descriptions here actually helps Gemini understand what to extract!
 class PaperExtraction(BaseModel):
-    title: str = Field(description="The exact title of the referenced research paper.")
+    title: str = Field(description="The title of the referenced research paper.")
     authors: str = Field(description="The authors of the paper.")
     keyterms: list[str] = Field(description="A list of 3 to 5 specific, single-word keyterms mentioned.")
 
 def get_llm_extraction(tweet_text):
     prompt = (
         "Read the following tweet and extract the referenced research paper. "
-        "If you dont know which research paper, make an informed guess"
+        "If you dont know which research paper, make an informed guess. "
         "Return the title, authors, and a list of keyterms. "
         "\n\n"
         f"Tweet: {tweet_text}"
     )
     
     try:
-        # Generate content with strict schema enforcement
         response = client.models.generate_content(
             model=MODEL_NAME,
             contents=prompt,
             config={
-                "response_mime_type": "application/json", # Forces JSON mode
-                "response_schema": PaperExtraction,       # Enforces our exact Pydantic schema
-                "temperature": 0.0                        # Zero temp for strict data extraction
+                "response_mime_type": "application/json",
+                "response_schema": PaperExtraction,      
+                "temperature": 0.0                        
             }
         )
         
-        # The SDK automatically parses the JSON back into our PaperExtraction Python object!
         result: PaperExtraction = response.parsed
         return result.title, result.authors, result.keyterms
         
@@ -92,18 +87,20 @@ def count_keyterm_matches(search_terms, abstract):
             matches += 1
     return matches
 
-def find_best_match(extracted_title, search_terms):
+def get_top_5_matches(extracted_title, search_terms):
     if not extracted_title:
-        return None, None, 0
+        return []
         
     extracted_title_lower = extracted_title.lower()
     
+    # Cutoff lowered to 0.4. If it is 1, it requires an exact match and defeats the purpose of difflib.
     matches = difflib.get_close_matches(extracted_title_lower, collection_titles, n=5, cutoff=0.4)
     
     if not matches:
-        return None, None, 0
+        return []
         
     best_match_title = matches[0]
+    print(f"Best title match before kw: {best_match_title}")
     best_pubkey = title_to_pubkey[best_match_title]
     best_abstract = pubkey_to_abstract.get(best_pubkey, "")
     max_matches = count_keyterm_matches(search_terms, best_abstract)
@@ -113,12 +110,20 @@ def find_best_match(extracted_title, search_terms):
         abstract = pubkey_to_abstract.get(pubkey, "")
         kw_matches = count_keyterm_matches(search_terms, abstract)
         
-        if kw_matches > max_matches:
-            max_matches = kw_matches
-            best_match_title = match
-            best_pubkey = pubkey
-            
-    return best_match_title, best_pubkey, max_matches
+        # Calculate sequence similarity (Python's equivalent to normalized edit distance)
+        sim_ratio = difflib.SequenceMatcher(None, extracted_title_lower, match_title).ratio()
+        
+        candidates.append({
+            "title": pubkey_to_title[pubkey],
+            "pubkey": pubkey,
+            "sim_ratio": sim_ratio,
+            "kw_matches": kw_matches
+        })
+        
+    # Sort strictly by similarity ratio (edit distance) descending
+    candidates.sort(key=lambda x: x["sim_ratio"], reverse=True)
+    
+    return candidates
 
 def evaluate_system(tweets_dataset, num_samples):
     correct_matches = 0
@@ -134,9 +139,10 @@ def evaluate_system(tweets_dataset, num_samples):
         true_title = pubkey_to_title.get(true_pubkey, "NOT_FOUND")
         true_abstract = pubkey_to_abstract.get(true_pubkey, "")
         
-        print(f"[{i+1}/{limit}] Tweet: {tweet_text[:100]}...")
+        print(f"[{i+1}/{limit}] Tweet: {tweet_text}...")
         
         # Step 1: Gemini Extraction
+        time.sleep(2)       
         extracted_title, extracted_authors, raw_keyterms = get_llm_extraction(tweet_text)
         
         processed_terms = set()
@@ -146,32 +152,41 @@ def evaluate_system(tweets_dataset, num_samples):
                 if len(clean_word) > 1: 
                     processed_terms.add(clean_word)
                     
-        print(f"   Gemini Title Guessed : '{extracted_title}'")
-        print(f"   Search Terms         : {list(processed_terms)}")
+        print(f"   LLM Title Guessed : '{extracted_title}'")
+        print(f"   Search Terms      : {list(processed_terms)}")
         
-        # Step 2: Fuzzy Match & Re-ranking
-        matched_title_lower, predicted_pubkey, predicted_matches = find_best_match(extracted_title, processed_terms)
-        
+        # Step 2: Get Top 5 Sorted by Edit Distance (Similarity Ratio)
+        candidates = get_top_5_matches(extracted_title, processed_terms)
         true_matches = count_keyterm_matches(processed_terms, true_abstract)
         
-        if predicted_pubkey:
-            matched_title_display = pubkey_to_title[predicted_pubkey]
-            print(f"   Selected Paper       : '{matched_title_display}'")
+        predicted_pubkey = None
+        
+        if candidates:
+            print("\n   Top 5 Candidates (Sorted by String Similarity):")
+            for rank, candidate in enumerate(candidates, 1):
+                marker = "[CORRECT]" if candidate["pubkey"] == true_pubkey else "[       ]"
+                title_preview = candidate["title"][:60] + ("..." if len(candidate["title"]) > 60 else "")
+                
+                print(f"   {rank}. {marker} Sim: {candidate['sim_ratio']:.4f} | KW: {candidate['kw_matches']} | Title: '{title_preview}'")
+            
+            # The predicted pubkey is the #1 item based on string similarity
+            predicted_pubkey = candidates[0]["pubkey"]
+            print(f"\n   Selected Paper         : '{candidates[0]['title']}'")
+            print(f"   Term hits in SELECTED  : {candidates[0]['kw_matches']} / {len(processed_terms)}")
         else:
-            print(f"   Selected Paper       : None")
+            print(f"\n   Selected Paper         : None")
 
-        print(f"   Term hits in TRUE abstract     : {true_matches} / {len(processed_terms)}")
-        if predicted_pubkey:
-            print(f"   Term hits in SELECTED abstract : {predicted_matches} / {len(processed_terms)}")
+        print(f"   Term hits in TRUE abst : {true_matches} / {len(processed_terms)}")
         
         # Step 3: Evaluate
         if predicted_pubkey == true_pubkey:
             print("   Result: ✅ CORRECT PAPER IDENTIFIED\n")
             correct_matches += 1
         else:
-            print(f"   True Title Was       : '{true_title}'")
+            print(f"   True Title Was         : '{true_title}'")
             print("   Result: ❌ MISMATCH\n")
             
+        print("-" * 50)
         total_processed += 1
         
     accuracy = (correct_matches / total_processed) * 100 if total_processed > 0 else 0

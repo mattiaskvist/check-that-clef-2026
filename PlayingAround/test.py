@@ -113,25 +113,22 @@ def count_keyterm_matches(search_terms, abstract):
 
 def find_best_matches_embedded(extracted_title, search_terms, true_pubkey):
     if not extracted_title:
-        return None
+        return None, -1
         
     # 1. Generate embedding for the extracted title
     query_response = ollama.embeddings(model=MODEL_NAME, prompt=extracted_title.lower())
     query_embedding = np.array(query_response['embedding'])
     
     # 2. Calculate Cosine Similarity across the whole collection
-    # Formula: dot(A, B) / (norm(A) * norm(B))
     dot_products = np.dot(collection_embeddings, query_embedding)
     norms = np.linalg.norm(collection_embeddings, axis=1) * np.linalg.norm(query_embedding)
     similarities = dot_products / norms
     
-    # 3. Get the indices of the Top 5 highest similarity scores
-    top_5_indices = np.argsort(similarities)[-5:][::-1]
-    
     candidates = []
     
-    # 4. Gather data for the Top 5
-    for idx in top_5_indices:
+    # 3. Gather data for ALL papers to find the exact rank
+    # Note: If your collection is massive, counting keyterms on every abstract can be slow.
+    for idx in range(len(collection_titles)):
         match_title_lower = collection_titles[idx]
         sim_score = similarities[idx]
         pubkey = title_to_pubkey[match_title_lower]
@@ -149,15 +146,24 @@ def find_best_matches_embedded(extracted_title, search_terms, true_pubkey):
             "is_correct": is_correct
         })
         
-    # 5. Re-rank the candidates
-    # We sort primarily by kw_matches (descending), and break ties using sim_score (descending)
-    candidates.sort(key=lambda x: (x["kw_matches"], x["sim_score"]), reverse=True)
+    # 4. Re-rank the ENTIRE collection
+    # Sort primarily by kw_matches (descending), break ties using sim_score (descending)
+    candidates.sort(key=lambda x: (x["sim_score"], x["kw_matches"]), reverse=True)
     
-    return candidates
+    # 5. Find the rank of the correct paper
+    correct_rank = -1
+    for rank, candidate in enumerate(candidates, 1):
+        if candidate["is_correct"]:
+            correct_rank = rank
+            break
+            
+    return candidates, correct_rank
 
 def evaluate_system(tweets_dataset, num_samples):
     correct_matches = 0
     total_processed = 0
+    mrr_sum = 0.0 # Mean Reciprocal Rank sum
+    
     limit = min(num_samples, len(tweets_dataset["text"]))
     
     print(f"\nStarting evaluation on {limit} tweets using {MODEL_NAME} embeddings...\n")
@@ -166,7 +172,7 @@ def evaluate_system(tweets_dataset, num_samples):
         tweet_text = tweets_dataset["text"][i] 
         true_pubkey = tweets_dataset["pubkey"][i]
         
-        print(f"[{i+1}/{limit}] Tweet: {tweet_text[:100]}...")
+        print(f" Tweet: {tweet_text}...")
         
         # Step 1: LLM Extraction
         extracted_title, extracted_authors, raw_keyterms = get_llm_extraction(tweet_text)
@@ -182,25 +188,37 @@ def evaluate_system(tweets_dataset, num_samples):
         print(f"   LLM Title Guessed : '{extracted_title}'")
         print(f"   Search Terms      : {list(processed_terms)}")
         
-        # Step 2: Get Ranked Candidates
-        ranked_candidates = find_best_matches_embedded(extracted_title, processed_terms, true_pubkey)
+        # Step 2: Get Ranked Candidates and Exact Rank
+        ranked_candidates, correct_rank = find_best_matches_embedded(extracted_title, processed_terms, true_pubkey)
         
         if ranked_candidates:
+            print(f"\n   -> Correct Paper is ranked: #{correct_rank} out of {len(ranked_candidates)}")
             print("\n   Top 5 Candidates (Ranked by System):")
-            for rank, candidate in enumerate(ranked_candidates, 1):
-                # Add a marker if this is the ground truth correct paper
+            
+            # Print the Top 5
+            for rank in range(min(5, len(ranked_candidates))):
+                candidate = ranked_candidates[rank]
                 marker = "[CORRECT]" if candidate["is_correct"] else "[       ]"
                 title_preview = candidate["title"][:60] + ("..." if len(candidate["title"]) > 60 else "")
-                
-                print(f"   {rank}. {marker} Sim: {candidate['sim_score']:.4f} | KW: {candidate['kw_matches']} | Title: '{title_preview}'")
+                print(f"   {rank+1}. {marker} Sim: {candidate['sim_score']:.4f} | KW: {candidate['kw_matches']} | Title: '{title_preview}'")
             
-            # The system's final choice is the #1 ranked item
+            # If the correct paper is outside the top 5, print it at the bottom so we can inspect its scores
+            if correct_rank > 5:
+                print("   ...")
+                candidate = ranked_candidates[correct_rank - 1]
+                title_preview = candidate["title"][:60] + ("..." if len(candidate["title"]) > 60 else "")
+                print(f"   {correct_rank}. [CORRECT] Sim: {candidate['sim_score']:.4f} | KW: {candidate['kw_matches']} | Title: '{title_preview}'")
+
+            # Tracking Metrics
+            if correct_rank > 0:
+                mrr_sum += 1.0 / correct_rank
+                
             final_choice = ranked_candidates[0]
             if final_choice["is_correct"]:
-                print("\n   Result: ✅ CORRECT PAPER SELECTED")
+                print("\n   Result: ✅ CORRECT PAPER SELECTED AT RANK 1")
                 correct_matches += 1
             else:
-                print("\n   Result: ❌ MISMATCH")
+                print(f"\n   Result: ❌ MISMATCH (Correct was at rank {correct_rank})")
                 
         else:
             print("   Result: ❌ MISMATCH (No title extracted)")
@@ -209,16 +227,15 @@ def evaluate_system(tweets_dataset, num_samples):
         total_processed += 1
         
     accuracy = (correct_matches / total_processed) * 100 if total_processed > 0 else 0
+    mrr = (mrr_sum / total_processed) if total_processed > 0 else 0
     
     print("="*40)
     print("      FINAL EVALUATION RESULTS")
     print("="*40)
     print(f"Total Processed: {total_processed}")
-    print(f"Correct Matches: {correct_matches}")
-    print(f"Accuracy:        {accuracy:.2f}%")
+    print(f"Top-1 Accuracy:  {accuracy:.2f}% ({correct_matches} correct)")
+    print(f"Mean Recip Rank: {mrr:.4f} (MRR)")
     print("="*40)
 
 if __name__ == "__main__":
-    # You will need to install numpy and tqdm if you haven't already:
-    # pip install numpy tqdm
     evaluate_system(dev_split, NUM_TWEETS_TO_EVALUATE)
