@@ -39,13 +39,11 @@ def main():
     print("-" * 50)
     
     
-    
-    
     # step 3. for each testing tweet,
     # calculate cosine similarity with all paper chunks,
     # and get top N most similar paper chunks
     
-    NN = NearestNeighbors(n_neighbors=10, metric='cosine')
+    NN = NearestNeighbors(n_neighbors=5, metric='cosine')
     NN.fit(paper_chunks["embedding"].to_list())
     print("Nearest neighbors model fitted on paper chunk embeddings.")
     
@@ -54,22 +52,52 @@ def main():
     # and get the final ranking of papers for each testing tweet.
     print("Calculating nearest neighbors for testing tweets...")
     subset_testing_tweets = testing_tweets.head(5)  # For demonstration, we will only use the first 5 testing tweets
-    distances, indices = NN.kneighbors(subset_testing_tweets["embedding"].to_list())
+    distances, indices = NN.kneighbors(testing_tweets["embedding"].to_list())
     
     print("Loading ground truth")
 
     # evaluate result using ground truth data
     languages = ["en"]
     tweet_to_pubkey = load_tweet_pubkeys(languages=languages)
-    print(tweet_to_pubkey["en"])
-    for i, tweet_id in enumerate(subset_testing_tweets["id"]):
-        print(f"Testing tweet ID: {tweet_id}")
-        clean_id = str(tweet_id).replace("tweet_", "")
-        print(f"True pubkey: {tweet_to_pubkey['en'][clean_id]}")
-        print("Top 10 most similar paper chunks:")
-        for idx in indices[i]:
-            print(paper_chunks["pubkey"][idx])
-        print("-" * 50)
+    tot = 0
+    totMRR = 0
+ 
+    for i, tweet_id in enumerate(testing_tweets["id"]):
+        clean_id = str(tweet_id)
+        true_key = tweet_to_pubkey['en'][clean_id]
+        for j, idx in enumerate(indices[i]):
+
+            if int(paper_chunks["pubkey"][int(idx)]) == true_key:
+                totMRR += 1/(j + 1)
+                break
+        tot += 1
+                
+    print("MRR@10: ", totMRR/tot)  
+    
+    print(distances.shape, indices.shape)
+        
+    #print(mrr_at_5())
+    
+# use scorer to evaluate MRR
+def mrr_at_5(cos_sims, labels) -> float:
+    top5_indices = np.argsort(cos_sims)[-5:][::-1]  # Get indices of top 5 most similar paper chunks
+    top5_keys = labels[top5_indices]  # Get the corresponding pubkeys for the top 5 paper chunks
+    
+    # Compare labels to top-5 predictions
+    labels_2d = labels[:, None]
+    matches_mask = (top5_keys == labels_2d)
+
+    # Get position of correct predictions
+    positions = np.argmax(matches_mask, axis=1)
+    positions[~matches_mask.any(axis=1)] = -1
+    positions = positions.astype(int)
+
+    # Get reciprocal rank
+    rr = np.zeros_like(positions, dtype=float)
+    mask = positions >= 0
+    rr[mask] = 1.0 / (positions[mask] + 1)
+
+    return float(rr.mean())
         
 def parse_embeddings(dataframe: pl.DataFrame) -> pl.DataFrame:
     return dataframe.with_columns(

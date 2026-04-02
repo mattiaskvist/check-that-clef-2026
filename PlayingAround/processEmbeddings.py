@@ -1,14 +1,14 @@
 import os
 import sqlite3
 import numpy as np
-import torch
+#import torch
 from datasets import load_dataset
-from sentence_transformers import SentenceTransformer
+#from sentence_transformers import SentenceTransformer
 
 # ==========================================
 # Configuration
 # ==========================================
-MODEL_NAME = "jinaai/jina-embeddings-v5-text-nano-retrieval"
+MODEL_NAME = "jinaai-jina-embeddings-v5-text-nano-retrieval"
 LANG = "en"
 DB_PATH = f"local_embeddings_{MODEL_NAME.replace("/", "-")}.db"
 OVERLAP_PERCENTAGE = 0.15 
@@ -102,12 +102,12 @@ def run_pipeline():
     # --- Step 4: Process Tweets (Batched) ---
     print("\n4. Processing Tweets...")
     tweet_texts = tweets_data["text"]
+    tweet_ids = tweets_data["index"]
     avg_tweet_len = get_average_length(tweet_texts)
     print(f"   -> Calculated average tweet length: {avg_tweet_len} characters.")
 
     pending_tweets = []
-    for i, text in enumerate(tweet_texts):
-        tweet_id = f"tweet_{i}"
+    for tweet_id, text in zip(tweet_ids,tweet_texts):
         if tweet_id not in existing_tweet_ids:
             pending_tweets.append((tweet_id, text))
 
@@ -188,6 +188,93 @@ def run_pipeline():
 
     print("\nAll data successfully embedded and saved locally!")
     conn.close()
+    
+
+def fix_tweet_ids():
+    """
+    Creates a new table, populates it with the correct IDs and existing embeddings,
+    then replaces the old table.
+    """
+    import sqlite3
+    from datasets import load_dataset
+    
+    print("Starting ID fix via new table...")
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    
+    # 1. Load dataset
+    tweets_data = load_dataset("sschellhammer/CT26_Task1_SourceRetrievalForScientificWebClaims", LANG)["train"]
+    
+    c.execute("SELECT content, embedding FROM tweets order by rowid")  # Fetch embeddings in the same order as the dataset
+    old_embeddings = c.fetchall()
+    
+    # 2. Build the mapping, using the original index directly
+    # content_to_id = {}
+    # for text, orig_id, embeddings in zip(tweets_data["text"], tweets_data["index"], old_embeddings):
+    #     new_id = str(orig_id)  # Convert to string if not already
+    #     content_to_id[text] = new_id
+        
+    new_records = []
+    for text, orig_id in zip(tweets_data["text"], tweets_data["index"]):
+        # Add LIMIT 1 just to be safe in case of duplicate texts
+        c.execute("SELECT embedding FROM tweets WHERE content = ? LIMIT 1", (text,))
+        
+        # fetchone() returns a tuple: (blob,)
+        row = c.fetchone()
+        
+        # Extract the actual raw bytes from the tuple
+        embedding_blob = row[0] if row else None 
+        
+        new_id = str(orig_id)
+        new_records.append((new_id, text, embedding_blob))
+    
+    # assert the embeddings and text are in the same order as in the original dataset
+    for i, (text, orig_id) in enumerate(zip(tweets_data["text"], tweets_data["index"])):
+        expected_id = str(orig_id)
+        actual_id = new_records[i][0]
+        assert expected_id == actual_id, f"ID mismatch at index {i}: expected {expected_id}, got {actual_id}"
+        
+        # check the text also matches to ensure we didn't accidentally shuffle the order
+        expected_text = text
+        actual_text = new_records[i][1]
+        assert expected_text == actual_text, f"Text mismatch at index {i}: expected '{expected_text}', got '{actual_text}'"
+    
+    # 3. Create the new temporary table
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS tweets_fixed (
+            id TEXT PRIMARY KEY,
+            content TEXT,
+            embedding BLOB
+        )
+    ''')
+    # Clear it just in case it already exists from a previous failed run
+    c.execute('DELETE FROM tweets_fixed') 
+    
+    
+    # 6. Insert into the new table
+    try:
+        print(f"Inserting {len(new_records)} records into new table...")
+        c.executemany('INSERT INTO tweets_fixed (id, content, embedding) VALUES (?, ?, ?)', new_records)
+        
+        # 7. Swap the tables (Commented out for safe testing)
+        print("Swapping tables (currently skipped for testing)...")
+        c.execute('ALTER TABLE tweets RENAME TO tweets_broken')
+        c.execute('ALTER TABLE tweets_fixed RENAME TO tweets')
+        
+        conn.commit()
+        print(f"ID Fix Completed: Successfully rebuilt table with {len(new_records)} records.")
+        
+    except sqlite3.IntegrityError as e:
+        print(f"Database Error (Likely duplicate IDs): {e}")
+        conn.rollback()
+        
+    finally:
+        conn.close()
+    
+    
 
 if __name__ == "__main__":
-    run_pipeline()
+    #run_pipeline()
+    fix_tweet_ids()
+    
+    
