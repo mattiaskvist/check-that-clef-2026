@@ -24,11 +24,11 @@ class rankingSystem():
 
         try:
             ollama.show(title_model_name)
-            print("✅ Model is available locally.")
+            print("Model is available locally.")
         except Exception:
-            print(f"⏳ Model not found. Pulling '{title_model_name}'...")
+            print(f"Model not found. Pulling '{title_model_name}'...")
             ollama.pull(title_model_name)
-            print("✅ Model pulled successfully!")
+            print("Model pulled successfully!")
         self.title_model_name = title_model_name
 
         self.embeddingModel = SentenceTransformer(
@@ -37,12 +37,14 @@ class rankingSystem():
             trust_remote_code=True
         )
     
-    def trainSystem(self):
+    def train_classifier(self):
+        """Train the Random Forest classifier using the nearest neighbor results."""
         
+        pass
 
 
     def runSystem(self):
-
+        pass
 
     def getLLMExtraction(self, tweet_text):
         json_schema = {
@@ -73,11 +75,11 @@ class rankingSystem():
             print(f"Extraction Error: {e}")
             return "", "", []
         
-    def loadData(self, languages = ["en", "de", "fr"]):
+    def load_data(self, languages = ["en", "de", "fr"]):
         self.languages = languages
         self.loadPaperData()
         self.loadTweets()
-        self.loadTrainingTweets()
+        self.loadTestingTweets()
         self.loadAndTrainNN()
         
     def loadPaperData(self):
@@ -105,7 +107,7 @@ class rankingSystem():
                 self.tweet_to_text[lang][id] = text
                 self.tweet_to_pubkey[lang][id] = pubkey
         
-    def loadTrainingTweets(self):
+    def loadTestingTweets(self):
         self.test_tweet_to_text = {}
         
         for lang in self.languages:
@@ -145,7 +147,7 @@ class rankingSystem():
         return self.NNTitlesPubkeys[index]
     
     def getPubkeyNNAbstract(self, index):
-        return self.NNabstractsPubkeys[index]
+        return self.NNabstractPubkeys[index]
 
         
         
