@@ -36,4 +36,4 @@ Execute the translation script:
 uv run data_augmentation/translate.py
 ```
 
-This will trigger the entire augmentation process, which may take some time depending on the size of the dataset and the response times of the Gemini API. The final translated datasets will be saved in the `data_augmentation` directory as `de_train.json` and `fr_train.json`. It translates about one tweet every 1.5 seconds, so the entire process should complete in under 4 hours for the full English training set.
+This will trigger the entire augmentation process, which may take some time depending on the size of the dataset and the response times of the Gemini API. The final translated datasets will be saved in the `data_augmentation` directory as `de_train.json` and `fr_train.json`. It translates about 30 tweets per second, so the entire English training set of 15,699 rows should complete in approximately 8-9 minutes.
