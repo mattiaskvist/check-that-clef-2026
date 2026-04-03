@@ -8,6 +8,7 @@ structured JSON format using Pydantic. Finally, the translated records are
 merged with the existing German and French datasets and saved locally as JSON files.
 """
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -16,13 +17,17 @@ from datasets import load_dataset
 from dotenv import load_dotenv
 from google import genai
 from pydantic import BaseModel
-from tqdm import tqdm
+from tqdm.asyncio import tqdm
 
 load_dotenv()
 
 MODEL_NAME = "gemini-3.1-flash-lite-preview"
 DATASET_NAME = "sschellhammer/CT26_Task1_SourceRetrievalForScientificWebClaims"
 OUTPUT_DIRECTORY = Path(__file__).resolve().parent
+
+# --- Concurrency Configuration ---
+# 50 concurrent requests x ~1 sec per request = ~3,000 Requests Per Minute
+CONCURRENCY_LIMIT = 50
 
 
 class Translations(BaseModel):
@@ -76,6 +81,31 @@ Text to translate:
     return response.parsed
 
 
+async def translate_text_async(text: str, semaphore: asyncio.Semaphore) -> Translations:
+    """
+    Async function that requests translations while respecting the concurrency limit.
+    """
+    prompt = f"""Translate the following English text into German and French.
+Only return the translated texts without any conversational filler.
+
+Text to translate:
+{text}
+"""
+    # The semaphore ensures we don't exceed our allowed concurrent requests
+    async with semaphore:
+        # Note the use of client.aio for asynchronous calls
+        response = await client.aio.models.generate_content(
+            model=MODEL_NAME,
+            contents=prompt,
+            config={
+                "response_mime_type": "application/json",
+                "response_schema": Translations,
+                "temperature": 0.0,
+            },
+        )
+        return response.parsed
+
+
 def normalize_rows(rows: list[dict]) -> list[dict]:
     """
     Standardizes a list of dataset rows by injecting an absolute index.
@@ -97,7 +127,16 @@ def normalize_rows(rows: list[dict]) -> list[dict]:
     ]
 
 
-def translate_split(source_rows: list[dict]) -> tuple[list[dict], list[dict]]:
+async def process_row(row: dict, semaphore: asyncio.Semaphore) -> tuple:
+    """Wrapper to map pubkeys to their async translation results."""
+    try:
+        translated_text = await translate_text_async(row["text"], semaphore)
+        return row["pubkey"], translated_text, None
+    except Exception as e:
+        return row["pubkey"], None, e
+
+
+async def translate_split(source_rows: list[dict]) -> tuple[list[dict], list[dict]]:
     """
     Processes a list of source rows, translating the text of each row into
     German and French.
@@ -115,27 +154,32 @@ def translate_split(source_rows: list[dict]) -> tuple[list[dict], list[dict]]:
     german = []
     french = []
 
+    # Initialize the concurrency bouncer
+    semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
+
+    # Create a list of async tasks for the entire dataset
+    tasks = [process_row(row, semaphore) for row in source_rows]
+
     try:
-        for row in tqdm(
-            source_rows,
-            desc="Translating...",
+        # asyncio.as_completed yields tasks as soon as they finish, letting us update the progress bar in real-time
+        for completed_task in tqdm(
+            asyncio.as_completed(tasks),
+            total=len(tasks),
+            desc="Translating (Async)...",
             unit="row",
             disable=not sys.stdout.isatty(),
         ):
-            translated_text = translate_text(row["text"])
-            german.append(
-                {
-                    "pubkey": row["pubkey"],
-                    "text": translated_text.german,
-                }
-            )
-            french.append(
-                {
-                    "pubkey": row["pubkey"],
-                    "text": translated_text.french,
-                }
-            )
-            
+            pubkey, trans, error = await completed_task
+
+            if error:
+                # If a specific row fails, we log it but don't crash the whole pipeline
+                print(f"\n[!] Failed to translate pubkey {pubkey}: {error}")
+                continue
+
+            if trans:
+                german.append({"pubkey": pubkey, "text": trans.german})
+                french.append({"pubkey": pubkey, "text": trans.french})
+
     except (Exception, KeyboardInterrupt) as e:
         # Catch any API errors, network failures, or a manual Ctrl+C
         print(f"\n[!] Translation interrupted: {e}")
@@ -183,7 +227,7 @@ def write_json(path: Path, rows: list[dict]) -> None:
         handle.write("\n")
 
 
-def main() -> None:
+async def main() -> None:
     """
     Main execution block. Loads datasets, triggers the translation pipeline
     on a randomized subset, merges the results, and writes out the final JSON files.
@@ -197,14 +241,14 @@ def main() -> None:
 
     english_train = english_data["train"]
     # Skip the first x rows that you successfully translated last time but it crashed
-    #english_train = english_data["train"].select(range(3982, len(english_data["train"])))
+    # english_train = english_data["train"].select(range(3982, len(english_data["train"])))
     german_train = german_data["train"]
     french_train = french_data["train"]
 
     print(
         f"Translating {len(english_train)} English training rows into German and French..."
     )
-    translated_german, translated_french = translate_split(english_train)
+    translated_german, translated_french = await translate_split(english_train)
 
     # Merge translations with the original language datasets
     merged_german = merge_with_existing_split(german_train, translated_german)
@@ -219,8 +263,9 @@ def main() -> None:
     print(f"Writing merged French training set to {french_output}...")
     write_json(french_output, merged_french)
 
+    await client.aio.close()
     print("Done.")
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
