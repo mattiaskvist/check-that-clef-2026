@@ -115,25 +115,31 @@ def translate_split(source_rows: list[dict]) -> tuple[list[dict], list[dict]]:
     german = []
     french = []
 
-    for row in tqdm(
-        source_rows,
-        desc="Translating...",
-        unit="row",
-        disable=not sys.stdout.isatty(),
-    ):
-        translated_text = translate_text(row["text"])
-        german.append(
-            {
-                "pubkey": row["pubkey"],
-                "text": translated_text.german,
-            }
-        )
-        french.append(
-            {
-                "pubkey": row["pubkey"],
-                "text": translated_text.french,
-            }
-        )
+    try:
+        for row in tqdm(
+            source_rows,
+            desc="Translating...",
+            unit="row",
+            disable=not sys.stdout.isatty(),
+        ):
+            translated_text = translate_text(row["text"])
+            german.append(
+                {
+                    "pubkey": row["pubkey"],
+                    "text": translated_text.german,
+                }
+            )
+            french.append(
+                {
+                    "pubkey": row["pubkey"],
+                    "text": translated_text.french,
+                }
+            )
+            
+    except (Exception, KeyboardInterrupt) as e:
+        # Catch any API errors, network failures, or a manual Ctrl+C
+        print(f"\n[!] Translation interrupted: {e}")
+        print(f"[!] Salvaging {len(german)} successfully translated rows...")
 
     return german, french
 
@@ -190,6 +196,8 @@ def main() -> None:
     french_data = load_dataset(DATASET_NAME, "fr")
 
     english_train = english_data["train"]
+    # Skip the first x rows that you successfully translated last time but it crashed
+    #english_train = english_data["train"].select(range(3982, len(english_data["train"])))
     german_train = german_data["train"]
     french_train = french_data["train"]
 
