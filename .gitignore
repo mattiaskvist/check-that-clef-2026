@@ -212,3 +212,4 @@ __marimo__/
 de*.json
 fr*.json
 en*.json
+hard_negative_triplets.json
