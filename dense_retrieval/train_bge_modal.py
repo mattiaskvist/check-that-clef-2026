@@ -128,7 +128,7 @@ def train_model():
         save_strategy="epoch",
         logging_steps=50,
         gradient_checkpointing=True,  # Enable gradient checkpointing to reduce memory usage
-        metric_for_best_model="eval_multilingual_dev_ndcg@10",  # Track NDCG@10 for the "best" model
+        metric_for_best_model="eval_multilingual_dev_cosine_ndcg@10",
         load_best_model_at_end=True,
     )
 
