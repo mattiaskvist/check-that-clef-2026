@@ -126,7 +126,7 @@ def evaluate_pipeline():
     # --- 1. LOAD MODELS (ONCE) ---
     print("Loading Dense Retriever (BGE-M3 + LoRA)...")
     dense_model = SentenceTransformer("BAAI/bge-m3", device="cuda")
-    hf_id = "mattiaskvist/bge-m3-checkthat-finetuned"
+    hf_id = "boyes-boys-clef-2026/bge-m3-checkthat-finetuned"
     print(f"Injecting LoRA adapters from {hf_id}...")
     dense_model[0].auto_model = PeftModel.from_pretrained(
         dense_model[0].auto_model,
