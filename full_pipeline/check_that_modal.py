@@ -35,49 +35,70 @@ def MRR_at_5(preds, label) -> float:
         return 1 / (preds.index(label) + 1)
     else:
         return 0.0
-    
+
+
 def last_logit_pool(logits, attention_mask):
     import torch
-    left_padding = (attention_mask[:, -1].sum() == attention_mask.shape[0])
+
+    left_padding = attention_mask[:, -1].sum() == attention_mask.shape[0]
     if left_padding:
         return logits[:, -1]
     else:
         sequence_lengths = attention_mask.sum(dim=1) - 1
         batch_size = logits.shape[0]
-        return torch.stack([logits[i, sequence_lengths[i]] for i in range(batch_size)], dim=0)
+        return torch.stack(
+            [logits[i, sequence_lengths[i]] for i in range(batch_size)], dim=0
+        )
+
 
 def get_inputs(pairs, tokenizer, prompt=None, max_length=1024):
     if prompt is None:
         prompt = "Given a query A and a passage B, determine whether the passage contains an answer to the query by providing a prediction of either 'Yes' or 'No'."
     sep = "\n"
-    prompt_inputs = tokenizer(prompt, return_tensors=None, add_special_tokens=False)['input_ids']
-    sep_inputs = tokenizer(sep, return_tensors=None, add_special_tokens=False)['input_ids']
-    
+    prompt_inputs = tokenizer(prompt, return_tensors=None, add_special_tokens=False)[
+        "input_ids"
+    ]
+    sep_inputs = tokenizer(sep, return_tensors=None, add_special_tokens=False)[
+        "input_ids"
+    ]
+
     inputs = []
     for query, passage in pairs:
-        query_inputs = tokenizer(f'Query A: {query}', return_tensors=None, add_special_tokens=False, max_length=max_length * 3 // 4, truncation=True)
-        passage_inputs = tokenizer(f'Passage B: {passage}\nAnswer:', return_tensors=None, add_special_tokens=False, max_length=max_length, truncation=True)
-        
+        query_inputs = tokenizer(
+            f"Query A: {query}",
+            return_tensors=None,
+            add_special_tokens=False,
+            max_length=max_length * 3 // 4,
+            truncation=True,
+        )
+        passage_inputs = tokenizer(
+            f"Passage B: {passage}\nAnswer:",
+            return_tensors=None,
+            add_special_tokens=False,
+            max_length=max_length,
+            truncation=True,
+        )
+
         # --- Bypass prepare_for_model using manual concatenation ---
         bos = [tokenizer.bos_token_id] if tokenizer.bos_token_id is not None else []
-        q_ids = bos + query_inputs['input_ids']
-        p_ids = sep_inputs + passage_inputs['input_ids']
-        
+        q_ids = bos + query_inputs["input_ids"]
+        p_ids = sep_inputs + passage_inputs["input_ids"]
+
         if len(q_ids) + len(p_ids) > max_length:
-            p_ids = p_ids[:max_length - len(q_ids)]
-            
-        item = {'input_ids': q_ids + p_ids + sep_inputs + prompt_inputs}
-        item['attention_mask'] = [1] * len(item['input_ids'])
+            p_ids = p_ids[: max_length - len(q_ids)]
+
+        item = {"input_ids": q_ids + p_ids + sep_inputs + prompt_inputs}
+        item["attention_mask"] = [1] * len(item["input_ids"])
         # ----------------------------------------------------------------
-        
+
         inputs.append(item)
-        
+
     return tokenizer.pad(
-            inputs,
-            padding=True,
-            max_length=max_length + len(sep_inputs) + len(prompt_inputs),
-            pad_to_multiple_of=8,
-            return_tensors='pt',
+        inputs,
+        padding=True,
+        max_length=max_length + len(sep_inputs) + len(prompt_inputs),
+        pad_to_multiple_of=8,
+        return_tensors="pt",
     )
 
 
@@ -102,6 +123,7 @@ def evaluate_pipeline():
     from tqdm import tqdm
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
+    # --- 1. LOAD MODELS (ONCE) ---
     print("Loading Dense Retriever (BGE-M3 + LoRA)...")
     dense_model = SentenceTransformer("BAAI/bge-m3", device="cuda")
     hf_id = "mattiaskvist/bge-m3-checkthat-finetuned"
@@ -122,24 +144,17 @@ def evaluate_pipeline():
         device_map="auto",
     )
     reranker_model.eval()
-
     yes_loc = reranker_tokenizer("Yes", add_special_tokens=False)["input_ids"][0]
 
+    # --- 2. LOAD & PREPARE COLLECTION (ONCE) ---
     print("Loading datasets...")
-    split = "dev"
-    lang = "de"
     collection_dataset = load_dataset(
         "sschellhammer/CT26_Task1_SourceRetrievalForScientificWebClaims",
         "collection",
         split="collection",
     )
-    tweets = list(
-        load_dataset(
-            "sschellhammer/CT26_Task1_SourceRetrievalForScientificWebClaims", lang
-        )[split]
-    )
 
-    print("Preprocessing collection for dense retrieval...")
+    print("Preprocessing collection for indexing...")
     article_texts = []
     article_pubkeys = []
     for doc in collection_dataset:
@@ -148,7 +163,7 @@ def evaluate_pipeline():
         article_texts.append(text_representation)
         article_pubkeys.append(pubkey)
 
-    # SentenceTransformers automatically uses the GPU if available
+    print("Generating dense embeddings for the entire collection...")
     article_embeddings = dense_model.encode_document(
         article_texts,
         convert_to_tensor=True,
@@ -156,82 +171,163 @@ def evaluate_pipeline():
         device="cuda",
     )
 
-    print("Preprocessing collection for BM25...")
+    print("Generating BM25 sparse index for the entire collection...")
     tokenized_corpus = [text.lower().split() for text in article_texts]
     bm25 = BM25Okapi(tokenized_corpus)
 
-    print("Running dense + sparse retrieval...")
-    all_mrr_scores = []
-    rrf_mrr_scores = []
-    dense_mrr_scores = []
-    sparse_mrr_scores = []
+    # --- 3. EVALUATE ACROSS LANGUAGES ---
+    languages = ["de", "fr", "en"]
+    split = "dev"
 
-    for _, row in enumerate(tqdm(tweets, desc="Evaluating Queries")):
-        query_text = row["text"]
-        true_pubkey = row["pubkey"]
+    # Dictionary to hold the final big summary metrics
+    global_results = {}
 
-        # 1. DENSE & SPARSE RETRIEVAL
-        query_embedding = dense_model.encode_query(query_text, convert_to_tensor=True)
-        dense_scores = util.cos_sim(query_embedding, article_embeddings)[0]
-        dense_ranks = torch.argsort(dense_scores, descending=True).tolist()
+    # Tracker for the overall Global Average
+    global_totals = {
+        "queries": 0,
+        "dense_sum": 0.0,
+        "sparse_sum": 0.0,
+        "rrf_sum": 0.0,
+        "final_sum": 0.0,
+    }
 
-        tokenized_query = query_text.lower().split()
-        bm25_scores = bm25.get_scores(tokenized_query)
-        sparse_ranks = np.argsort(bm25_scores)[::-1].tolist()
+    for lang in languages:
+        print("\n==========================================")
+        print(f"  STARTING EVALUATION FOR LANGUAGE: {lang.upper()}")
+        print("==========================================")
 
-        dense_top_5_pubkeys = [article_pubkeys[doc_id] for doc_id in dense_ranks[:5]]
-        sparse_top_5_pubkeys = [article_pubkeys[doc_id] for doc_id in sparse_ranks[:5]]
-
-        dense_mrr_scores.append(MRR_at_5(dense_top_5_pubkeys, true_pubkey))
-        sparse_mrr_scores.append(MRR_at_5(sparse_top_5_pubkeys, true_pubkey))
-
-        # 2. RECIPROCAL RANK FUSION (RRF)
-        k = 60
-        rrf_scores = {}
-        for rank, doc_id in enumerate(dense_ranks):
-            rrf_scores[doc_id] = rrf_scores.get(doc_id, 0.0) + 1.0 / (k + rank + 1)
-        for rank, doc_id in enumerate(sparse_ranks):
-            rrf_scores[doc_id] = rrf_scores.get(doc_id, 0.0) + 1.0 / (k + rank + 1)
-
-        rrf_sorted_docs = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
-        top_k_candidates = [doc_id for doc_id, rrf_score in rrf_sorted_docs[:10]]
-        rrf_mrr_scores.append(
-            MRR_at_5(
-                [article_pubkeys[doc_id] for doc_id in top_k_candidates], true_pubkey
-            )
+        tweets = list(
+            load_dataset(
+                "sschellhammer/CT26_Task1_SourceRetrievalForScientificWebClaims", lang
+            )[split]
         )
 
-        # 3. CROSS-ENCODER RERANKING
-        # Build the exact prompt string BAAI used during training
-        pairs = [[query_text, article_texts[doc_id]] for doc_id in top_k_candidates]
-        inputs = get_inputs(pairs, reranker_tokenizer)
-        inputs = inputs.to(reranker_model.device)
+        all_mrr_scores = []
+        rrf_mrr_scores = []
+        dense_mrr_scores = []
+        sparse_mrr_scores = []
 
-        # We don't need to track gradients for evaluation, saving VRAM
-        with torch.inference_mode():
-            outputs = reranker_model(**inputs)
-            pooled_logits = last_logit_pool(outputs.logits, inputs['attention_mask'])
-            rerank_scores = pooled_logits[:, yes_loc].cpu().float().tolist()
+        for _, row in enumerate(
+            tqdm(tweets, desc=f"Evaluating {lang.upper()} Queries")
+        ):
+            query_text = row["text"]
+            true_pubkey = row["pubkey"]
 
-        final_results = list(zip(top_k_candidates, rerank_scores))
-        final_results.sort(key=lambda x: x[1], reverse=True)
+            # Phase 1: DENSE & SPARSE RETRIEVAL
+            query_embedding = dense_model.encode_query(
+                query_text, convert_to_tensor=True
+            )
+            dense_scores = util.cos_sim(query_embedding, article_embeddings)[0]
+            dense_ranks = torch.argsort(dense_scores, descending=True).tolist()
 
-        # CALCULATE MRR
-        predicted_pubkeys = [article_pubkeys[doc_id] for doc_id, score in final_results]
-        mrr_score = MRR_at_5(predicted_pubkeys, true_pubkey)
-        all_mrr_scores.append(mrr_score)
+            tokenized_query = query_text.lower().split()
+            bm25_scores = bm25.get_scores(tokenized_query)
+            sparse_ranks = np.argsort(bm25_scores)[::-1].tolist()
 
-    avg_dense_mrr = sum(dense_mrr_scores) / len(dense_mrr_scores)
-    avg_sparse_mrr = sum(sparse_mrr_scores) / len(sparse_mrr_scores)
-    avg_rrf_mrr = sum(rrf_mrr_scores) / len(rrf_mrr_scores)
-    average_mrr = sum(all_mrr_scores) / len(all_mrr_scores)
+            dense_top_5_pubkeys = [
+                article_pubkeys[doc_id] for doc_id in dense_ranks[:5]
+            ]
+            sparse_top_5_pubkeys = [
+                article_pubkeys[doc_id] for doc_id in sparse_ranks[:5]
+            ]
 
-    print("\n=== Evaluation Complete! ===")
-    print(f"Total Queries Evaluated: {len(tweets)}")
-    print(f"Dense Only MRR@5:        {avg_dense_mrr:.4f}")
-    print(f"Sparse Only (BM25) MRR@5:  {avg_sparse_mrr:.4f}")
-    print(f"RRF MRR@5:                 {avg_rrf_mrr:.4f}")
-    print(f"Final Pipeline MRR@5:    {average_mrr:.4f}")
+            dense_mrr_scores.append(MRR_at_5(dense_top_5_pubkeys, true_pubkey))
+            sparse_mrr_scores.append(MRR_at_5(sparse_top_5_pubkeys, true_pubkey))
+
+            # Phase 2: RECIPROCAL RANK FUSION (RRF)
+            k = 60
+            rrf_scores = {}
+            for rank, doc_id in enumerate(dense_ranks):
+                rrf_scores[doc_id] = rrf_scores.get(doc_id, 0.0) + 1.0 / (k + rank + 1)
+            for rank, doc_id in enumerate(sparse_ranks):
+                rrf_scores[doc_id] = rrf_scores.get(doc_id, 0.0) + 1.0 / (k + rank + 1)
+
+            rrf_sorted_docs = sorted(
+                rrf_scores.items(), key=lambda x: x[1], reverse=True
+            )
+            top_k_candidates = [doc_id for doc_id, rrf_score in rrf_sorted_docs[:10]]
+
+            rrf_mrr_scores.append(
+                MRR_at_5(
+                    [article_pubkeys[doc_id] for doc_id in top_k_candidates],
+                    true_pubkey,
+                )
+            )
+
+            # Phase 3: CROSS-ENCODER RERANKING
+            pairs = [[query_text, article_texts[doc_id]] for doc_id in top_k_candidates]
+            inputs = get_inputs(pairs, reranker_tokenizer)
+            inputs = inputs.to(reranker_model.device)
+
+            with torch.inference_mode():
+                outputs = reranker_model(**inputs)
+                pooled_logits = last_logit_pool(
+                    outputs.logits, inputs["attention_mask"]
+                )
+                rerank_scores = pooled_logits[:, yes_loc].cpu().float().tolist()
+
+            final_results = list(zip(top_k_candidates, rerank_scores))
+            final_results.sort(key=lambda x: x[1], reverse=True)
+
+            predicted_pubkeys = [
+                article_pubkeys[doc_id] for doc_id, score in final_results
+            ]
+            mrr_score = MRR_at_5(predicted_pubkeys, true_pubkey)
+            all_mrr_scores.append(mrr_score)
+
+        # Calculate averages for the current language
+        avg_dense = sum(dense_mrr_scores) / len(dense_mrr_scores)
+        avg_sparse = sum(sparse_mrr_scores) / len(sparse_mrr_scores)
+        avg_rrf = sum(rrf_mrr_scores) / len(rrf_mrr_scores)
+        avg_final = sum(all_mrr_scores) / len(all_mrr_scores)
+
+        # Save to global results tracker
+        global_results[lang] = {
+            "Total Queries": len(tweets),
+            "Dense MRR@5": avg_dense,
+            "Sparse MRR@5": avg_sparse,
+            "RRF MRR@5": avg_rrf,
+            "Final MRR@5": avg_final,
+        }
+
+        # Add to global totals for the final combined average
+        global_totals["queries"] += len(tweets)
+        global_totals["dense_sum"] += sum(dense_mrr_scores)
+        global_totals["sparse_sum"] += sum(sparse_mrr_scores)
+        global_totals["rrf_sum"] += sum(rrf_mrr_scores)
+        global_totals["final_sum"] += sum(all_mrr_scores)
+
+        # Print per-language summary
+        print(f"\n--- Summary for {lang.upper()} ---")
+        print(f"Total Queries:      {len(tweets)}")
+        print(f"Dense MRR@5:        {avg_dense:.4f}")
+        print(f"Sparse MRR@5:       {avg_sparse:.4f}")
+        print(f"RRF MRR@5:          {avg_rrf:.4f}")
+        print(f"Final Pipeline:     {avg_final:.4f}")
+
+    # --- 4. PRINT BIG SUMMARY ---
+    print("\n\n" + "*" * 50)
+    print("*" + " FINAL MULTILINGUAL EVALUATION SUMMARY ".center(48) + "*")
+    print("*" * 50)
+
+    for lang, metrics in global_results.items():
+        print(f"\n[{lang.upper()}] - {metrics['Total Queries']} Queries Evaluated")
+        print(f"  ├─ Dense Only:    {metrics['Dense MRR@5']:.4f}")
+        print(f"  ├─ Sparse Only:   {metrics['Sparse MRR@5']:.4f}")
+        print(f"  ├─ RRF Output:    {metrics['RRF MRR@5']:.4f}")
+        print(f"  └─ Final Rerank:  {metrics['Final MRR@5']:.4f}")
+
+    # Print Global Average
+    total_q = global_totals["queries"]
+    print("\n==================================================")
+    print(f"[GLOBAL AVERAGE] - {total_q} Total Queries Across All Languages")
+    print(f"  ├─ Overall Dense:    {(global_totals['dense_sum'] / total_q):.4f}")
+    print(f"  ├─ Overall Sparse:   {(global_totals['sparse_sum'] / total_q):.4f}")
+    print(f"  ├─ Overall RRF:      {(global_totals['rrf_sum'] / total_q):.4f}")
+    print(f"  └─ Overall Final:    {(global_totals['final_sum'] / total_q):.4f}")
+    print("==================================================\n")
+
+    print("\n" + "*" * 50)
 
 
 # ==========================================
