@@ -213,3 +213,4 @@ de*.json
 fr*.json
 en*.json
 hard_negative_triplets.json
+best_model/
