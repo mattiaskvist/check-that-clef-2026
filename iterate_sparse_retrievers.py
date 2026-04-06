@@ -2,9 +2,28 @@ import numpy as np
 from datasets import load_dataset, disable_progress_bar
 from rank_bm25 import BM25Okapi
 from tqdm import tqdm
+import re
 
 from full_pipeline.interfaces import BaseRetriever
 from scorer import scorer
+
+# Simple multilingual stopwords (high frequency, low information)
+STOPWORDS = frozenset([
+    # English
+    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "must", "shall", "can", "of", "in", "to",
+    "for", "on", "with", "at", "by", "from", "as", "into", "through",
+    "and", "or", "but", "if", "then", "than", "that", "this", "it",
+    # German
+    "der", "die", "das", "ein", "eine", "ist", "sind", "war", "waren",
+    "und", "oder", "aber", "wenn", "dann", "von", "mit", "auf", "für",
+    "zu", "bei", "nach", "aus", "im", "am", "um", "als", "wie", "so",
+    # French  
+    "le", "la", "les", "un", "une", "est", "sont", "était", "étaient",
+    "et", "ou", "mais", "si", "alors", "de", "du", "des", "en", "à",
+    "pour", "par", "sur", "dans", "avec", "ce", "cette", "qui", "que",
+])
 
 # Disable Hugging Face progress bars so they don't pollute the agent's run.log
 disable_progress_bar()
@@ -22,13 +41,18 @@ class SparseRetriever(BaseRetriever):
     def __init__(self):
         self.bm25_model = None
 
+    def tokenize(self, text: str) -> list[str]:
+        """Tokenize text with stopword removal."""
+        tokens = text.lower().split()
+        return [t for t in tokens if t not in STOPWORDS]
+
     def index(self, collection: list[dict]):
         corpus = [self.document_to_text(doc) for doc in collection]
-        tokenized_corpus = [text.lower().split() for text in corpus]
+        tokenized_corpus = [self.tokenize(text) for text in corpus]
         self.bm25_model = BM25Okapi(tokenized_corpus)
 
     def search(self, query: str) -> list[int]:
-        tokenized_query = query.lower().split()
+        tokenized_query = self.tokenize(query)
         scores = self.bm25_model.get_scores(tokenized_query)
         return np.argsort(scores)[::-1].tolist()
 
