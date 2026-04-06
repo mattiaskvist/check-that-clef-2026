@@ -1,6 +1,6 @@
 # Full Evaluation Pipeline
 
-This directory contains the code for the full evaluation pipeline, which integrates the dense retrieval model (BGE-M3 with LoRA fine-tuning) with the sparse retrieval results (vanilla BM25), applies RRF fusion, and performs final re-ranking using a cross-encoder. The main script `check_that_modal.py` orchestrates the entire process.
+This directory contains the code for the full evaluation pipeline, which integrates the dense retrieval model (BGE-M3 with LoRA fine-tuning) with the sparse retrieval results (vanilla BM25), applies RRF fusion, and performs final re-ranking using a cross-encoder. The main script `main.py` orchestrates the entire process.
 
 ## How to run
 
@@ -19,7 +19,8 @@ uv run modal secret create hf-token HF_TOKEN=hf_XXXXXXXXXXXXXXXXXXXXXXXXXXXX
 3. Ensure you have access to the huggingface repo "boyes-boys-clef-2026/bge-m3-checkthat-finetuned" which contains the LoRA adapter weights for the fine-tuned BGE-M3 model.
 
 ```bash
-uv run modal run -d check_that_modal.py
+# from root of the project, run:
+uv run modal run -d -m full_pipeline/main.py
 ```
 
 ## Current Stats on Dev
