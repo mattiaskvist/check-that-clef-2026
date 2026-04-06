@@ -1,6 +1,6 @@
 import numpy as np
 from datasets import load_dataset, disable_progress_bar
-from rank_bm25 import BM25Okapi
+from rank_bm25 import BM25Plus
 from tqdm import tqdm
 import re
 
@@ -51,7 +51,7 @@ class SparseRetriever(BaseRetriever):
     def index(self, collection: list[dict]):
         corpus = [self.document_to_text(doc) for doc in collection]
         tokenized_corpus = [self.tokenize(text) for text in corpus]
-        self.bm25_model = BM25Okapi(tokenized_corpus)
+        self.bm25_model = BM25Plus(tokenized_corpus)
 
     def search(self, query: str) -> list[int]:
         tokenized_query = self.tokenize(query)
