@@ -42,9 +42,11 @@ class SparseRetriever(BaseRetriever):
         self.bm25_model = None
 
     def tokenize(self, text: str) -> list[str]:
-        """Tokenize text with stopword removal."""
-        tokens = text.lower().split()
-        return [t for t in tokens if t not in STOPWORDS]
+        """Tokenize text with punctuation and stopword removal."""
+        # Remove punctuation, keep alphanumeric and spaces
+        text = re.sub(r'[^\w\s]', ' ', text.lower())
+        tokens = text.split()
+        return [t for t in tokens if t not in STOPWORDS and len(t) > 1]
 
     def index(self, collection: list[dict]):
         corpus = [self.document_to_text(doc) for doc in collection]
