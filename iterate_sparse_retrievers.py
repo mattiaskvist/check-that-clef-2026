@@ -85,7 +85,8 @@ class SparseRetriever(BaseRetriever):
     def document_to_text(self, doc: dict) -> str:
         title = (doc.get("title") or "").strip()
         abstract = (doc.get("abstract") or "").strip()
-        return f"{title}\n{abstract}".strip()
+        # Repeat title to boost its importance
+        return f"{title} {title} {abstract}".strip()
 
 
 def top5_pubkeys_for_queries(
