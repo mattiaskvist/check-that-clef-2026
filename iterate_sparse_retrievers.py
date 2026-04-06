@@ -17,20 +17,32 @@ STEMMERS = {
 
 # Simple multilingual stopwords (high frequency, low information)
 STOPWORDS = frozenset([
-    # English
+    # English - expanded
     "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
     "have", "has", "had", "do", "does", "did", "will", "would", "could",
     "should", "may", "might", "must", "shall", "can", "of", "in", "to",
     "for", "on", "with", "at", "by", "from", "as", "into", "through",
     "and", "or", "but", "if", "then", "than", "that", "this", "it",
-    # German
+    "we", "they", "he", "she", "you", "i", "our", "their", "its", "my",
+    "your", "his", "her", "who", "which", "what", "when", "where", "how",
+    "all", "each", "every", "both", "few", "more", "most", "other", "some",
+    "such", "no", "nor", "not", "only", "own", "same", "so", "also", "just",
+    "about", "after", "before", "between", "during", "without", "within",
+    "there", "here", "these", "those", "very", "too", "also", "well", "back",
+    # German - expanded
     "der", "die", "das", "ein", "eine", "ist", "sind", "war", "waren",
     "und", "oder", "aber", "wenn", "dann", "von", "mit", "auf", "für",
     "zu", "bei", "nach", "aus", "im", "am", "um", "als", "wie", "so",
-    # French  
+    "wir", "sie", "er", "es", "ich", "du", "ihr", "uns", "euch", "sich",
+    "sein", "haben", "werden", "kann", "muss", "soll", "will", "darf",
+    "nicht", "auch", "nur", "noch", "schon", "mehr", "sehr", "hier", "dort",
+    # French - expanded
     "le", "la", "les", "un", "une", "est", "sont", "était", "étaient",
     "et", "ou", "mais", "si", "alors", "de", "du", "des", "en", "à",
     "pour", "par", "sur", "dans", "avec", "ce", "cette", "qui", "que",
+    "nous", "vous", "ils", "elles", "il", "elle", "je", "tu", "on",
+    "son", "sa", "ses", "notre", "votre", "leur", "leurs", "mon", "ma",
+    "ne", "pas", "plus", "moins", "très", "bien", "aussi", "encore", "tout",
 ])
 
 # Disable Hugging Face progress bars so they don't pollute the agent's run.log
