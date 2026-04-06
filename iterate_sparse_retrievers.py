@@ -62,11 +62,15 @@ class SparseRetriever(BaseRetriever):
         self.bm25_model = None
         self.stemmer = STEMMERS["en"]  # Corpus is in English
 
-    def tokenize(self, text: str) -> list[str]:
-        """Tokenize text with punctuation, stopword removal, and stemming."""
+    def tokenize(self, text: str, add_bigrams: bool = True) -> list[str]:
+        """Tokenize text with punctuation, stopword removal, stemming, and optional bigrams."""
         text = re.sub(r'[^\w\s]', ' ', text.lower())
         tokens = text.split()
-        return [self.stemmer.stem(t) for t in tokens if t not in STOPWORDS and len(t) > 1]
+        unigrams = [self.stemmer.stem(t) for t in tokens if t not in STOPWORDS and len(t) > 1]
+        if add_bigrams and len(unigrams) >= 2:
+            bigrams = [f"{unigrams[i]}_{unigrams[i+1]}" for i in range(len(unigrams) - 1)]
+            return unigrams + bigrams
+        return unigrams
 
     def index(self, collection: list[dict]):
         corpus = [self.document_to_text(doc) for doc in collection]
