@@ -20,7 +20,7 @@ uv run modal secret create hf-token HF_TOKEN=hf_XXXXXXXXXXXXXXXXXXXXXXXXXXXX
 
 ```bash
 # from root of the project, run:
-uv run modal run -d -m full_pipeline/main.py
+uv run modal run -d -m full_pipeline.main
 ```
 
 ## Current Stats on Dev
