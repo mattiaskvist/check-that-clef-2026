@@ -3,17 +3,13 @@ from datasets import load_dataset, disable_progress_bar
 from rank_bm25 import BM25Plus
 from tqdm import tqdm
 import re
-from nltk.stem.snowball import SnowballStemmer
+from nltk.stem import PorterStemmer
 
 from full_pipeline.interfaces import BaseRetriever
 from scorer import scorer
 
-# Initialize stemmers for each language
-STEMMERS = {
-    "en": SnowballStemmer("english"),
-    "de": SnowballStemmer("german"),
-    "fr": SnowballStemmer("french"),
-}
+# Initialize stemmer
+STEMMER = PorterStemmer()
 
 # Simple multilingual stopwords (high frequency, low information)
 STOPWORDS = frozenset([
@@ -60,7 +56,7 @@ class SparseRetriever(BaseRetriever):
 
     def __init__(self):
         self.bm25_model = None
-        self.stemmer = STEMMERS["en"]  # Corpus is in English
+        self.stemmer = STEMMER
 
     def tokenize(self, text: str, add_bigrams: bool = True) -> list[str]:
         """Tokenize text with punctuation, stopword removal, stemming, and optional bigrams."""
