@@ -3,13 +3,13 @@ from datasets import load_dataset, disable_progress_bar
 from rank_bm25 import BM25Plus
 from tqdm import tqdm
 import re
-from nltk.stem import PorterStemmer
+from nltk.stem import LancasterStemmer
 
 from full_pipeline.interfaces import BaseRetriever
 from scorer import scorer
 
 # Initialize stemmer
-STEMMER = PorterStemmer()
+STEMMER = LancasterStemmer()
 
 # Simple multilingual stopwords (high frequency, low information)
 STOPWORDS = frozenset([
