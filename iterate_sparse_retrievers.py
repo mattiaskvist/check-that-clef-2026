@@ -66,7 +66,7 @@ class SparseRetriever(BaseRetriever):
         """Tokenize text with punctuation, stopword removal, stemming, and optional bigrams."""
         text = re.sub(r'[^\w\s]', ' ', text.lower())
         tokens = text.split()
-        unigrams = [self.stemmer.stem(t) for t in tokens if t not in STOPWORDS and len(t) > 1]
+        unigrams = [self.stemmer.stem(t) for t in tokens if t not in STOPWORDS]
         if add_bigrams and len(unigrams) >= 2:
             bigrams = [f"{unigrams[i]}_{unigrams[i+1]}" for i in range(len(unigrams) - 1)]
             return unigrams + bigrams
