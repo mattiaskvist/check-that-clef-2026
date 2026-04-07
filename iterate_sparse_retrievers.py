@@ -49,7 +49,7 @@ class SparseRetriever(BaseRetriever):
     def index(self, collection: list[dict]):
         corpus = [self.document_to_text(doc) for doc in collection]
         tokenized_corpus = [self.tokenize(text) for text in corpus]
-        self.bm25_model = BM25Plus(tokenized_corpus, k1=2.5, b=0.80)
+        self.bm25_model = BM25Plus(tokenized_corpus, k1=2.5, b=0.85)
 
     def search(self, query: str) -> list[int]:
         tokenized_query = self.tokenize(query)
