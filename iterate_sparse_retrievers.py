@@ -60,7 +60,7 @@ class SparseRetriever(BaseRetriever):
         title = (doc.get("title") or "").strip()
         abstract = (doc.get("abstract") or "").strip()
         # Repeat title to boost its importance
-        return f"{title} {title} {title} {title} {title} {abstract}".strip()
+        return f"{title} {title} {title} {title} {abstract}".strip()
 
 
 def top5_pubkeys_for_queries(
