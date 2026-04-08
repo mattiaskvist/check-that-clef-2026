@@ -123,7 +123,8 @@ def translate_queries_to_english(queries: list[dict], source_lang: str) -> list[
             continue
 
         try:
-            translated_query["text"] = translator.translate(text=normalized_text)
+            translated_text = translator.translate(text=normalized_text)
+            translated_query["text"] = f"{translated_text} {normalized_text}"
         except (TranslationNotFound, NotValidPayload, NotValidLength, RequestError):
             translated_query["text"] = text
 
