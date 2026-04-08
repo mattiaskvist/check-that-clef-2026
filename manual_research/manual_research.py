@@ -9,7 +9,7 @@ import string
 
 
 # Config
-EXPERIMENT_COUNT = 4
+EXPERIMENT_COUNT = 5
 LANG = "en"
 PERCENT = 5
 TOP_K = 50
@@ -50,7 +50,7 @@ def build_article(row):
     authors = row["authors"]
     venue = row["venue"]
 
-    return title * 4 + " " + authors + " " + venue * 2 + " " + abstract
+    return title * 3 + " " + authors + " " + venue * 2 + " " + abstract
 
 
 # Load datasets

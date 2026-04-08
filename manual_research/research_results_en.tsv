@@ -3,3 +3,4 @@ exp	status	recall@3	recall@5	recall@25	recall@50	mrr@5	note
 2	keep	0.4873±0.0158	0.5183±0.0170	0.6074±0.0178	x	0.4478±0.0142	NLTK multilang stopword removal, punctuation removal
 3	keep	0.5199±0.0170	0.5497±0.0184	0.6527±0.0204	0.6926±0.0178	0.4770±0.0165	title 3x,venue 2x
 4	discard	0.5218±0.0184	0.5517±0.0167	0.6561±0.0187	0.6949±0.0179	0.4792±0.0164	title 4x
+5	discard	0.5266±0.0210	0.5555±0.0189	0.6608±0.0211	0.6995±0.0191	0.4825±0.0176	title 10x
