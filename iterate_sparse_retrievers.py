@@ -62,8 +62,15 @@ class SparseRetriever(BaseRetriever):
         """
         title = (doc.get("title") or "").strip()
         abstract = (doc.get("abstract") or "").strip()
+        authors_raw = doc.get("authors") or ""
+        authors = (
+            " ".join(str(part) for part in authors_raw)
+            if isinstance(authors_raw, list)
+            else str(authors_raw)
+        ).strip()
+        venue = str(doc.get("venue") or "").strip()
         # Repeat title to boost its importance
-        return f"{title} {title} {title} {abstract}".strip()
+        return f"{title} {title} {title} {abstract} {authors} {venue}".strip()
 
 
 def top_k_pubkeys_for_queries(
