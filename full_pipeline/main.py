@@ -1,7 +1,7 @@
 import modal
 
 from .rerankers import Gemma2BReranker
-from .retrievers import BGEM3Retriever, BM25Retriever
+from .retrievers import BGEM3Retriever, SparseRetriever
 from .utils import CHECKTHAT_DATASET, FusionProcessor, MRR_at_5, article_to_text
 
 # ==========================================
@@ -18,6 +18,7 @@ image = (
         "tqdm",
         "transformers",
         "accelerate",
+        "nltk",
     )
 )
 
@@ -41,7 +42,7 @@ def evaluate_pipeline():
     dense_retriever = BGEM3Retriever(
         lora_id="boyes-boys-clef-2026/bge-m3-checkthat-finetuned"
     )
-    sparse_retriever = BM25Retriever()
+    sparse_retriever = SparseRetriever()
     reranker = Gemma2BReranker()
     fusion = FusionProcessor()
 
@@ -53,7 +54,7 @@ def evaluate_pipeline():
     article_pubkeys = [doc["pubkey"] for doc in collection_dataset]
 
     dense_retriever.index(article_texts)
-    sparse_retriever.index(article_texts)
+    sparse_retriever.index(collection_dataset)
 
     # --- 3. EVALUATION LOOP ---
     languages = ["de", "fr", "en"]

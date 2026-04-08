@@ -1,4 +1,13 @@
+import nltk
+from nltk.corpus import stopwords
+
+nltk.download("stopwords", quiet=True)
+
 CHECKTHAT_DATASET = "sschellhammer/CT26_Task1_SourceRetrievalForScientificWebClaims"
+
+STOPWORDS = frozenset(
+    stopwords.words("english") + stopwords.words("german") + stopwords.words("french")
+)
 
 
 def article_to_text(doc: dict) -> str:

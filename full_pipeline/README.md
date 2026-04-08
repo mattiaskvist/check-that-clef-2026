@@ -29,27 +29,27 @@ Reported MRR@5 for the full pipeline on the dev set (combining dense retrieval, 
 
 [DE] - 386 Queries Evaluated
   ├─ Dense Only:    0.4945
-  ├─ Sparse Only:   0.0709
-  ├─ RRF Output:    0.3108
-  └─ Final Rerank:  0.5231
+  ├─ Sparse Only:   0.2138
+  ├─ RRF Output:    0.3692
+  └─ Final Rerank:  0.5186
 
 [FR] - 702 Queries Evaluated
   ├─ Dense Only:    0.5704
-  ├─ Sparse Only:   0.0661
-  ├─ RRF Output:    0.4271
-  └─ Final Rerank:  0.6181
+  ├─ Sparse Only:   0.2709
+  ├─ RRF Output:    0.4825
+  └─ Final Rerank:  0.6082
 
 [EN] - 3905 Queries Evaluated
   ├─ Dense Only:    0.5600
-  ├─ Sparse Only:   0.4264
-  ├─ RRF Output:    0.5287
-  └─ Final Rerank:  0.6041
+  ├─ Sparse Only:   0.5468
+  ├─ RRF Output:    0.5955
+  └─ Final Rerank:  0.6360
 
 [GLOBAL AVERAGE] - 4993 Total Queries Across All Languages
   ├─ Overall Dense:    0.5564
-  ├─ Overall Sparse:   0.3482
-  ├─ Overall RRF:      0.4976
-  └─ Overall Final:    0.5998
+  ├─ Overall Sparse:   0.4823
+  ├─ Overall RRF:      0.5621
+  └─ Overall Final:    0.6230
 
 Note: These numbers will need to be updated as we continue to refine the pipeline. The current results are based on the dev set, which we are treating as a validation set for iterative improvements.
 
