@@ -5,11 +5,12 @@ from rank_bm25 import BM25Okapi
 from tqdm import tqdm
 import nltk
 from nltk.corpus import stopwords
+from nltk.stem import LancasterStemmer
 import string
 
 
 # Config
-EXPERIMENT_COUNT = 9
+EXPERIMENT_COUNT = 10
 LANG = "en"
 PERCENT = 5
 TOP_K = 50
@@ -23,6 +24,8 @@ LOG_FILE = "manual_research/research_results_en.tsv"
 
 nltk.download("stopwords")
 
+stemmer = LancasterStemmer()
+
 MULTILINGUAL_STOPWORDS = set(
     stopwords.words("english") + stopwords.words("german") + stopwords.words("french")
 )
@@ -33,9 +36,7 @@ def tokenize(text):
     # return text.lower().split()
     translator = str.maketrans('', '', string.punctuation)
     clean_text = text.translate(translator)
-    tokens = [t for t in clean_text.split() if t not in MULTILINGUAL_STOPWORDS and len(t) > 1]
-    
-    # return tokens
+    tokens = [stemmer.stem(t) for t in clean_text.split() if t not in MULTILINGUAL_STOPWORDS]
     return tokens
 
 
