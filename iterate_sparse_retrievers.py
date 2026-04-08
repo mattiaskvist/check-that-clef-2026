@@ -2,6 +2,13 @@ import numpy as np
 from datasets import load_dataset, disable_progress_bar
 from rank_bm25 import BM25Plus
 from tqdm import tqdm
+from deep_translator import GoogleTranslator
+from deep_translator.exceptions import (
+    NotValidLength,
+    NotValidPayload,
+    RequestError,
+    TranslationNotFound,
+)
 import re
 from nltk.stem import LancasterStemmer
 from nltk.corpus import stopwords
@@ -99,6 +106,32 @@ def recall_at_k(preds: list[list[str]], targets: list[str], k: int = 30) -> floa
     return hits / len(targets) if targets else 0.0
 
 
+def translate_queries_to_english(queries: list[dict], source_lang: str) -> list[dict]:
+    if source_lang == "en":
+        return queries
+
+    translator = GoogleTranslator(source=source_lang, target="en")
+    translated_queries: list[dict] = []
+    for query in queries:
+        translated_query = dict(query)
+        text = str(query["text"])
+        normalized_text = re.sub(r"https?://\S+|www\.\S+|@\w+", " ", text).strip()
+
+        if not normalized_text:
+            translated_query["text"] = text
+            translated_queries.append(translated_query)
+            continue
+
+        try:
+            translated_query["text"] = translator.translate(text=normalized_text)
+        except (TranslationNotFound, NotValidPayload, NotValidLength, RequestError):
+            translated_query["text"] = text
+
+        translated_queries.append(translated_query)
+
+    return translated_queries
+
+
 def main() -> None:
     split = "train"
     collection = load_dataset(CHECKTHAT_DATASET, "collection", split="collection")
@@ -124,6 +157,7 @@ def main() -> None:
         sampled_dataset = hf_dataset.shuffle(seed=42).select(range(safe_sample_size))
         
         queries = list(sampled_dataset)
+        queries = translate_queries_to_english(queries, lang)
         targets = [q["pubkey"] for q in queries]
         num_queries = len(queries)
 
