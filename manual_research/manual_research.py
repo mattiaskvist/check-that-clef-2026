@@ -10,8 +10,8 @@ import string
 
 
 # Config
-EXPERIMENT_COUNT = 11
-LANG = "en"
+EXPERIMENT_COUNT = 2
+LANG = "de"
 PERCENT = 5
 TOP_K = 50
 K_VALUES = [3,5,25,50]
