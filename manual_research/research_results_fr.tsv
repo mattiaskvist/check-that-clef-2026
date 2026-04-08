@@ -1,0 +1,2 @@
+exp	status	recall@3	recall@5	recall@25	recall@50	mrr@5	note
+1	keep    0.2100±0.0219	0.2286±0.0296	0.3343±0.0214	0.4021±0.0245	0.1839±0.0235   baseline

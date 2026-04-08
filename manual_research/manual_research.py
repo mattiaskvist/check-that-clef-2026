@@ -5,11 +5,12 @@ from rank_bm25 import BM25Okapi
 from tqdm import tqdm
 import nltk
 from nltk.corpus import stopwords
+from nltk.stem import LancasterStemmer
 import string
 
 
 # Config
-EXPERIMENT_COUNT = 9
+EXPERIMENT_COUNT = 13
 LANG = "en"
 PERCENT = 5
 TOP_K = 50
@@ -19,9 +20,11 @@ K1_VALUE = 2.0
 B_VALUE = 1.0
 
 SEEDS = list(range(1,11))
-LOG_FILE = "manual_research/research_results_en.tsv"
+LOG_FILE = f"manual_research/research_results_{LANG}.tsv"
 
 nltk.download("stopwords")
+
+stemmer = LancasterStemmer()
 
 MULTILINGUAL_STOPWORDS = set(
     stopwords.words("english") + stopwords.words("german") + stopwords.words("french")
@@ -30,12 +33,9 @@ MULTILINGUAL_STOPWORDS = set(
 
 # Tokenization function
 def tokenize(text):
-    # return text.lower().split()
-    translator = str.maketrans('', '', string.punctuation)
-    clean_text = text.translate(translator)
-    tokens = [t for t in clean_text.split() if t not in MULTILINGUAL_STOPWORDS and len(t) > 1]
-    
-    # return tokens
+    translator = str.maketrans(string.punctuation, " " * len(string.punctuation))
+    clean_text = text.lower().translate(translator)
+    tokens = [stemmer.stem(t) for t in clean_text.split() if t not in MULTILINGUAL_STOPWORDS]
     return tokens
 
 
@@ -50,7 +50,7 @@ def build_article(row):
     authors = row["authors"]
     venue = row["venue"]
 
-    return title * 3 + " " + authors + " " + venue * 2 + " " + abstract
+    return title * 3 + " " + venue * 2 + " " + abstract
 
 
 # Load datasets
