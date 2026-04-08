@@ -1,7 +1,7 @@
 import random
 import numpy as np
 from datasets import load_dataset
-from rank_bm25 import BM25Plus
+from rank_bm25 import BM25Okapi
 from tqdm import tqdm
 import nltk
 from nltk.corpus import stopwords
@@ -9,14 +9,14 @@ import string
 
 
 # Config
-EXPERIMENT_COUNT = 7
+EXPERIMENT_COUNT = 8
 LANG = "en"
 PERCENT = 5
 TOP_K = 50
 K_VALUES = [3,5,25,50]
 
 K1_VALUE = 2.0
-B_VALUE = 1.0
+B_VALUE = 0.9
 
 SEEDS = list(range(1,11))
 LOG_FILE = "manual_research/research_results_en.tsv"
@@ -197,7 +197,7 @@ def main():
 
     print("Building BM25 index...")
 
-    bm25 = BM25Plus(
+    bm25 = BM25Okapi(
         tokenized_articles,
         k1=K1_VALUE,
         b=B_VALUE
