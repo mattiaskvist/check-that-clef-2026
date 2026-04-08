@@ -1,7 +1,7 @@
 import random
 import numpy as np
 from datasets import load_dataset
-from rank_bm25 import BM25Okapi
+from rank_bm25 import BM25Plus
 from tqdm import tqdm
 import nltk
 from nltk.corpus import stopwords
@@ -9,7 +9,7 @@ import string
 
 
 # Config
-EXPERIMENT_COUNT = 6
+EXPERIMENT_COUNT = 7
 LANG = "en"
 PERCENT = 5
 TOP_K = 50
@@ -50,7 +50,7 @@ def build_article(row):
     authors = row["authors"]
     venue = row["venue"]
 
-    return title * 3 + " " + authors + " " + venue * 2
+    return title * 3 + " " + authors + " " + venue * 2 + " " + abstract
 
 
 # Load datasets
@@ -197,7 +197,7 @@ def main():
 
     print("Building BM25 index...")
 
-    bm25 = BM25Okapi(
+    bm25 = BM25Plus(
         tokenized_articles,
         k1=K1_VALUE,
         b=B_VALUE
