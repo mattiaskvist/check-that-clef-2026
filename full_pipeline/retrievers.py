@@ -1,4 +1,11 @@
+import re
+
+import numpy as np
+from nltk.stem import LancasterStemmer
+from rank_bm25 import BM25Plus
+
 from .interfaces import BaseRetriever
+from .utils import STOPWORDS
 
 
 class BGEM3Retriever(BaseRetriever):
@@ -36,21 +43,41 @@ class BGEM3Retriever(BaseRetriever):
         return self.torch.argsort(scores, descending=True).tolist()
 
 
-class BM25Retriever(BaseRetriever):
+class SparseRetriever(BaseRetriever):
+    """A retriever that performs sparse retrieval.
+
+    Args:
+        BaseRetriever: The base retriever interface that this class implements.
+    """
+
     def __init__(self):
-        print("Initializing BM25 Sparse Retriever...")
         self.bm25_model = None
+        self.stemmer = LancasterStemmer()
 
-    def index(self, corpus: list[str]):
-        from rank_bm25 import BM25Okapi
+    def tokenize(self, text: str, add_bigrams: bool = True) -> list[str]:
+        """Tokenize text with punctuation, stopword removal, stemming, and optional bigrams."""
+        text = re.sub(r"[^\w\s]", " ", text.lower())
+        tokens = text.split()
+        unigrams = [self.stemmer.stem(t) for t in tokens if t not in STOPWORDS]
+        if add_bigrams and len(unigrams) >= 2:
+            bigrams = [
+                f"{unigrams[i]}_{unigrams[i + 1]}" for i in range(len(unigrams) - 1)
+            ]
+            return unigrams + bigrams
+        return unigrams
 
-        print("Generating BM25 sparse index...")
-        tokenized_corpus = [text.lower().split() for text in corpus]
-        self.bm25_model = BM25Okapi(tokenized_corpus)
+    def index(self, collection: list[dict]):
+        corpus = [self.document_to_text(doc) for doc in collection]
+        tokenized_corpus = [self.tokenize(text) for text in corpus]
+        self.bm25_model = BM25Plus(tokenized_corpus, k1=2.5, b=0.85)
 
     def search(self, query: str) -> list[int]:
-        import numpy as np
-
-        tokenized_query = query.lower().split()
+        tokenized_query = self.tokenize(query)
         scores = self.bm25_model.get_scores(tokenized_query)
         return np.argsort(scores)[::-1].tolist()
+
+    def document_to_text(self, doc: dict) -> str:
+        title = (doc.get("title") or "").strip()
+        abstract = (doc.get("abstract") or "").strip()
+        # Repeat title to boost its importance
+        return f"{title} {title} {title} {abstract}".strip()
