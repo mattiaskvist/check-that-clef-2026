@@ -1,0 +1,5 @@
+articles:
+pubkey int64, title string, abstract string, venue string, authors string
+
+tweets:
+index int64, text string, pubkey int64
