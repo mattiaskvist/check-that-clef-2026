@@ -10,7 +10,7 @@ import string
 
 
 # Config
-EXPERIMENT_COUNT = 10
+EXPERIMENT_COUNT = 11
 LANG = "en"
 PERCENT = 5
 TOP_K = 50
@@ -20,7 +20,7 @@ K1_VALUE = 2.0
 B_VALUE = 1.0
 
 SEEDS = list(range(1,11))
-LOG_FILE = "manual_research/research_results_en.tsv"
+LOG_FILE = f"manual_research/research_results_{LANG}.tsv"
 
 nltk.download("stopwords")
 
@@ -51,7 +51,7 @@ def build_article(row):
     authors = row["authors"]
     venue = row["venue"]
 
-    return title * 3 + " " + authors + " " + venue * 2 + " " + abstract
+    return title * 3 + " " + authors * 3 + " " + venue * 2 + " " + abstract
 
 
 # Load datasets
