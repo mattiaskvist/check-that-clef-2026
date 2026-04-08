@@ -70,7 +70,7 @@ class SparseRetriever(BaseRetriever):
         ).strip()
         venue = str(doc.get("venue") or "").strip()
         # Repeat title to boost its importance
-        return f"{title} {title} {title} {abstract} {authors} {venue}".strip()
+        return f"{title} {title} {title} {title} {title} {title} {title} {title} {abstract} {authors} {venue}".strip()
 
 
 def top_k_pubkeys_for_queries(
