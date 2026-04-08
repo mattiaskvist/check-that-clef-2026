@@ -1,0 +1,52 @@
+experiment	commit	metric	status	description
+0	1583c5e	0.348228	baseline	unmodified BM25Okapi
+1	e5f6498	0.374257	keep	add multilingual stopword removal
+2	48b9713	0.424902	keep	add punctuation removal and min token length
+3	44eb516	0.425840	keep	switch from BM25Okapi to BM25Plus
+4	076fcac	0.411082	discard	include venue and authors in document text
+5	d8f2745	0.090166	discard	try BM25L instead of BM25Plus
+6	482bf5c	0.427045	keep	add English Snowball stemming
+7	1e66f73	0.432005	keep	expand stopwords list significantly
+8	17d67c7	0.436374	keep	increase BM25Plus k1 to 2.0
+9	bf76d3b	0.436391	keep	increase k1 to 2.5
+10	23036e1	0.417041	discard	reduce b parameter to 0.5
+11	368009d	0.441768	keep	increase b parameter to 0.9
+12	fb871a4	0.453889	keep	add bigrams for phrase matching
+13	396e3ba	0.445831	discard	add trigrams for phrase matching
+14	4e2c272	0.461593	keep	boost title by repeating it twice
+15	bb2795b	0.463990	keep	boost title by repeating it 3 times
+16	4497f16	0.462982	discard	increase k1 to 3.0
+17	2f97c0e	0.000000	crash	add character 3-grams for fuzzy matching (timeout)
+18	c1847d0	0.465331	keep	remove min token length filter
+19	86733a8	0.465331	discard	preserve numeric tokens without stemming (no change)
+20	3290c99	0.465699	keep	use PorterStemmer instead of SnowballStemmer
+21	6d6a23c	0.465699	discard	add delta=0.5 to BM25Plus (no change)
+22	dd2f003	0.464166	discard	try BM25Okapi with tuned parameters
+23	66687c5	0.465288	discard	add scientific stopwords
+24	1089801	0.466330	keep	boost title 4x
+25	4fdab62	0.467585	keep	boost title 5x
+26	8cab50a	0.466480	discard	boost title 6x
+27	42b23ad	0.451996	discard	remove bigrams (simplify)
+28	0b82d9b	0.465942	discard	increase b to 0.95
+29	cfadab9	0.466380	discard	try k1=2.0
+30	de8b7d2	0.471794	keep	use LancasterStemmer (more aggressive)
+31	18f33b5	0.471483	discard	add lemmatization before stemming
+32	5c7d031	0.468386	discard	add skip-bigrams (window=2)
+33	c4c6432	0.472028	keep	try b=0.85
+34	5cf6284	0.472064	keep	try b=0.80
+35	830b24c	0.471276	discard	try b=0.75
+36	5772ac7	0.481411	keep	use NLTK stopwords instead of custom list
+37	fa25068	0.480620	discard	boost title 6x with new settings
+38	1c92bfb	0.481691	keep	try b=0.85 with NLTK stopwords
+39	ea07b59	0.481397	discard	try k1=2.0 with new settings
+40	33b1a8d	0.481731	keep	try title 4x with new settings
+41	ec5312b	0.482265	keep	try title 3x
+42	e5e62f1	0.479792	discard	try title 2x
+43	99fe9e9	0.481998	discard	try b=0.90
+44	fab9c5a	0.472538	discard	try SnowballStemmer with new stopwords
+45	aaa94ca	0.482182	discard	try k1=1.8
+46	4601d68	0.481581	discard	try k1=3.0
+47	07cb8f0	0.452427	discard	use only English stopwords
+48	4ca6f3f	0.481818	discard	add positional markers for first 3 words
+49	cbe2ac4	0.481951	discard	try k1=2.3
+50	9fbad6b	0.482232	discard	try b=0.82
