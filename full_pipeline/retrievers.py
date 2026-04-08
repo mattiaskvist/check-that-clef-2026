@@ -10,7 +10,6 @@ from .utils import STOPWORDS
 
 class BGEM3Retriever(BaseRetriever):
     def __init__(self, model_name: str = "BAAI/bge-m3", lora_id: str = None):
-        # Heavy imports happen safely inside the cloud!
         import os
 
         import torch
@@ -19,6 +18,8 @@ class BGEM3Retriever(BaseRetriever):
 
         self.util = util
         self.torch = torch
+        self.model_name = model_name
+        self.lora_id = lora_id
 
         print(f"Loading Dense Retriever ({model_name})...")
         self.model = SentenceTransformer(model_name, device="cuda")
@@ -31,15 +32,47 @@ class BGEM3Retriever(BaseRetriever):
             )
             self.model = self.model.to("cuda")
 
-    def index(self, corpus: list[str]):
-        print("Generating dense embeddings for the collection...")
-        self.embeddings = self.model.encode_document(
-            corpus, convert_to_tensor=True, show_progress_bar=True, device="cuda"
-        )
+    def _cache_key(self) -> str:
+        key = self.model_name.replace("/", "--")
+        if self.lora_id:
+            key += f"+{self.lora_id.replace('/', '--')}"
+        return key
 
-    def search(self, query: str) -> list[int]:
-        query_embedding = self.model.encode_query(query, convert_to_tensor=True)
-        scores = self.util.cos_sim(query_embedding, self.embeddings)[0]
+    def _load_or_encode(self, texts: list[str], encode_fn, cache_path: str | None, label: str):
+        import os
+
+        if cache_path and os.path.exists(cache_path):
+            print(f"[cache hit] Loading {label} from {cache_path}")
+            embs = self.torch.load(cache_path, map_location="cuda", weights_only=True)
+            print(f"Loaded {embs.shape[0]} cached {label}.")
+            return embs
+
+        print(f"Encoding {len(texts)} {label}...")
+        embs = encode_fn(texts, convert_to_tensor=True, show_progress_bar=True, device="cuda")
+
+        if cache_path:
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            self.torch.save(embs, cache_path)
+            print(f"[cache miss] Saved {label} to {cache_path}")
+
+        return embs
+
+    def _cache_path(self, cache_dir: str | None, filename: str) -> str | None:
+        import os
+        if cache_dir:
+            return os.path.join(cache_dir, self._cache_key(), filename)
+        return None
+
+    def index(self, corpus: list[str], cache_dir: str | None = None):
+        path = self._cache_path(cache_dir, "documents.pt")
+        self.embeddings = self._load_or_encode(corpus, self.model.encode_document, path, "document embeddings")
+
+    def index_queries(self, queries: list[str], cache_dir: str | None = None, cache_name: str = "queries"):
+        path = self._cache_path(cache_dir, f"{cache_name}.pt")
+        self.query_embeddings = self._load_or_encode(queries, self.model.encode_query, path, f"query embeddings ({cache_name})")
+
+    def search(self, query_idx: int) -> list[int]:
+        scores = self.util.cos_sim(self.query_embeddings[query_idx], self.embeddings)[0]
         return self.torch.argsort(scores, descending=True).tolist()
 
 

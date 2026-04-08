@@ -1,6 +1,6 @@
 import modal
 
-from .rerankers import Gemma2BReranker
+from .rerankers import Gemma2BReranker, NemotronReranker
 from .retrievers import BGEM3Retriever, SparseRetriever
 from .utils import CHECKTHAT_DATASET, FusionProcessor, MRR_at_5, article_to_text
 
@@ -19,10 +19,15 @@ image = (
         "transformers",
         "accelerate",
         "nltk",
+        "Pillow",
+        "torchvision",
     )
 )
 
 app = modal.App("checkthat-evaluation-pipeline")
+embedding_cache = modal.Volume.from_name("checkthat-embedding-cache", create_if_missing=True)
+
+CACHE_MOUNT = "/cache/embeddings"
 
 
 # ==========================================
@@ -33,6 +38,7 @@ app = modal.App("checkthat-evaluation-pipeline")
     gpu="A100-40GB",
     timeout=60 * 60 * 2,
     secrets=[modal.Secret.from_name("hf-token")],
+    volumes={CACHE_MOUNT: embedding_cache},
 )
 def evaluate_pipeline():
     from datasets import load_dataset
@@ -43,7 +49,7 @@ def evaluate_pipeline():
         lora_id="boyes-boys-clef-2026/bge-m3-checkthat-finetuned"
     )
     sparse_retriever = SparseRetriever()
-    reranker = Gemma2BReranker()
+    reranker = NemotronReranker()
     fusion = FusionProcessor()
 
     # --- LOAD & INDEX COLLECTION ---
@@ -53,11 +59,12 @@ def evaluate_pipeline():
     article_texts = [article_to_text(doc) for doc in collection_dataset]
     article_pubkeys = [doc["pubkey"] for doc in collection_dataset]
 
-    dense_retriever.index(article_texts)
+    dense_retriever.index(article_texts, cache_dir=CACHE_MOUNT)
+    embedding_cache.commit()
     sparse_retriever.index(collection_dataset)
 
     # --- 3. EVALUATION LOOP ---
-    languages = ["de", "fr", "en"]
+    languages = ["fr"]
     global_results = {}
     global_totals = {
         "queries": 0,
@@ -74,14 +81,18 @@ def evaluate_pipeline():
 
         tweets = list(load_dataset(CHECKTHAT_DATASET, lang)["dev"])
 
+        query_texts = [row["text"] for row in tweets]
+        dense_retriever.index_queries(query_texts, cache_dir=CACHE_MOUNT, cache_name=f"queries_{lang}")
+        embedding_cache.commit()
+
         dense_mrr, sparse_mrr, rrf_mrr, final_mrr = [], [], [], []
 
-        for row in tqdm(tweets, desc=f"Evaluating {lang.upper()} Queries"):
+        for i, row in enumerate(tqdm(tweets, desc=f"Evaluating {lang.upper()} Queries")):
             query_text = row["text"]
             true_pubkey = row["pubkey"]
 
             # Step A: Independent Retrieval
-            dense_ranks = dense_retriever.search(query_text)
+            dense_ranks = dense_retriever.search(i)
             sparse_ranks = sparse_retriever.search(query_text)
 
             dense_mrr.append(
