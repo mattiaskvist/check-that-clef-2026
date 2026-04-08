@@ -50,7 +50,7 @@ def build_article(row):
     authors = row["authors"]
     venue = row["venue"]
 
-    return title * 3 + " " + authors + " " + venue * 2 + " " + abstract
+    return title * 4 + " " + authors + " " + venue * 2 + " " + abstract
 
 
 # Load datasets
