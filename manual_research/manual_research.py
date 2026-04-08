@@ -10,8 +10,8 @@ import string
 
 
 # Config
-EXPERIMENT_COUNT = 2
-LANG = "de"
+EXPERIMENT_COUNT = 12
+LANG = "en"
 PERCENT = 5
 TOP_K = 50
 K_VALUES = [3,5,25,50]
@@ -33,9 +33,8 @@ MULTILINGUAL_STOPWORDS = set(
 
 # Tokenization function
 def tokenize(text):
-    # return text.lower().split()
     translator = str.maketrans('', '', string.punctuation)
-    clean_text = text.translate(translator)
+    clean_text = text.lower().translate(translator)
     tokens = [stemmer.stem(t) for t in clean_text.split() if t not in MULTILINGUAL_STOPWORDS]
     return tokens
 
@@ -51,7 +50,7 @@ def build_article(row):
     authors = row["authors"]
     venue = row["venue"]
 
-    return title * 3 + " " + authors * 3 + " " + venue * 2 + " " + abstract
+    return title * 3 + " " + authors + " " + venue * 2 + " " + abstract
 
 
 # Load datasets
