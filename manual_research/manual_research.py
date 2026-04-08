@@ -9,14 +9,14 @@ import string
 
 
 # Config
-EXPERIMENT_COUNT = 8
+EXPERIMENT_COUNT = 9
 LANG = "en"
 PERCENT = 5
 TOP_K = 50
 K_VALUES = [3,5,25,50]
 
 K1_VALUE = 2.0
-B_VALUE = 0.9
+B_VALUE = 1.0
 
 SEEDS = list(range(1,11))
 LOG_FILE = "manual_research/research_results_en.tsv"
@@ -33,7 +33,7 @@ def tokenize(text):
     # return text.lower().split()
     translator = str.maketrans('', '', string.punctuation)
     clean_text = text.translate(translator)
-    tokens = [t for t in clean_text.split() if t not in MULTILINGUAL_STOPWORDS]
+    tokens = [t for t in clean_text.split() if t not in MULTILINGUAL_STOPWORDS and len(t) > 1]
     
     # return tokens
     return tokens
