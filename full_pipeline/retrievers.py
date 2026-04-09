@@ -116,7 +116,7 @@ class BGEM3Retriever(BaseRetriever):
         self.query_embeddings = query_embeddings
         self._query_embeddings_by_name[cache_name] = query_embeddings
 
-    def search(self, query_idx: int, cache_name: str | None = None) -> list[int]:
+    def search(self, query_idx: int, cache_name: str | None = None) -> tuple[list[int], np.ndarray]:
         if cache_name is None:
             query_embeddings = self.query_embeddings
             if query_embeddings is None:
@@ -129,7 +129,18 @@ class BGEM3Retriever(BaseRetriever):
             query_embeddings = self._query_embeddings_by_name[cache_name]
 
         scores = self.util.cos_sim(query_embeddings[query_idx], self.embeddings)[0]
-        return self.torch.argsort(scores, descending=True).tolist()
+        ranked = self.torch.argsort(scores, descending=True).tolist()
+        scores_np = scores.cpu().numpy()
+        return ranked, scores_np
+
+    def unload_model(self):
+        """Free the embedding model from GPU. Computed embeddings are kept."""
+        import gc
+
+        del self.model
+        gc.collect()
+        self.torch.cuda.empty_cache()
+        print("Embedding model unloaded, GPU memory freed.")
 
 
 class HarrierRetriever(BaseRetriever):
@@ -235,7 +246,7 @@ class HarrierRetriever(BaseRetriever):
         self.torch.cuda.empty_cache()
         print("Embedding model unloaded, GPU memory freed.")
 
-    def search(self, query_idx: int, cache_name: str | None = None) -> list[int]:
+    def search(self, query_idx: int, cache_name: str | None = None) -> tuple[list[int], np.ndarray]:
         if cache_name is None:
             query_embeddings = self.query_embeddings
             if query_embeddings is None:
@@ -249,7 +260,9 @@ class HarrierRetriever(BaseRetriever):
             query_embeddings = query_sets[cache_name]
 
         scores = self.util.cos_sim(query_embeddings[query_idx], self.embeddings)[0]
-        return self.torch.argsort(scores, descending=True).tolist()
+        ranked = self.torch.argsort(scores, descending=True).tolist()
+        scores_np = scores.cpu().numpy()
+        return ranked, scores_np
 
 
 class SparseRetriever(BaseRetriever):
@@ -326,12 +339,19 @@ class SparseRetriever(BaseRetriever):
         except (TranslationNotFound, NotValidPayload, NotValidLength, RequestError):
             return normalized_text or text
 
-    def search(self, query: str, lang: str = "auto") -> list[int]:
-        """Translates the query if necessary, then performs BM25 search."""
+    def search(self, query: str, lang: str = "auto") -> tuple[list[int], np.ndarray]:
+        """Translates the query if necessary, then performs BM25 search.
+
+        Returns:
+            tuple of (ranked_indices, scores) where:
+                - ranked_indices: list of doc indices sorted by BM25 score descending
+                - scores: numpy array where scores[doc_id] = BM25 score
+        """
         translated_query = self._translate_query(query, lang)
         tokenized_query = self.tokenize(translated_query)
         scores = self.bm25_model.get_scores(tokenized_query)
-        return np.argsort(scores)[::-1].tolist()
+        ranked = np.argsort(scores)[::-1].tolist()
+        return ranked, scores
 
     def document_to_text(self, doc: dict) -> str:
         """Turn the article dict into a single string for indexing and retrieval.

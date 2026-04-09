@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
 
+import numpy as np
+
 
 class BaseRetriever(ABC):
     @abstractmethod
@@ -8,8 +10,14 @@ class BaseRetriever(ABC):
         pass
 
     @abstractmethod
-    def search(self, query: str) -> list[int]:
-        """Return a sorted list of document indices based on relevance."""
+    def search(self, query, **kwargs) -> tuple[list[int], np.ndarray]:
+        """Return a sorted list of document indices and a scores array.
+
+        Returns:
+            tuple of (ranked_indices, scores) where:
+                - ranked_indices: list of document indices sorted by relevance (descending)
+                - scores: numpy array where scores[doc_id] = relevance score
+        """
         pass
 
 
