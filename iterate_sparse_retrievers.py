@@ -115,7 +115,14 @@ def translate_queries_to_english(queries: list[dict], source_lang: str) -> list[
     for query in queries:
         translated_query = dict(query)
         text = str(query["text"])
-        normalized_text = re.sub(r"https?://\S+|www\.\S+|@\w+", " ", text).strip()
+        normalized_text = re.sub(r"https?://\S+|www\.\S+|@\w+", " ", text)
+        normalized_text = re.sub(
+            r"[\U0001F300-\U0001FAFF\U00002700-\U000027BF\U000024C2-\U0001F251]+",
+            " ",
+            normalized_text,
+        )
+        normalized_text = normalized_text.replace("#", " ")
+        normalized_text = re.sub(r"\s+", " ", normalized_text).strip()
 
         if not normalized_text:
             translated_query["text"] = text
@@ -124,11 +131,18 @@ def translate_queries_to_english(queries: list[dict], source_lang: str) -> list[
 
         try:
             translated_text = translator.translate(text=normalized_text)
-            original_terms = [
-                tok
-                for tok in re.sub(r"[^\w\s]", " ", normalized_text.lower()).split()
-                if tok not in STOPWORDS and len(tok) >= 5
-            ]
+            original_terms: list[str] = []
+            seen: set[str] = set()
+            for tok in re.sub(r"[^\w\s]", " ", normalized_text.lower()).split():
+                if (
+                    tok in seen
+                    or tok in STOPWORDS
+                    or len(tok) < 6
+                    or not tok.isalpha()
+                ):
+                    continue
+                seen.add(tok)
+                original_terms.append(tok)
             filtered_original = " ".join(original_terms)
             translated_query["text"] = (
                 f"{translated_text} {filtered_original}".strip()
@@ -136,7 +150,7 @@ def translate_queries_to_english(queries: list[dict], source_lang: str) -> list[
                 else translated_text
             )
         except (TranslationNotFound, NotValidPayload, NotValidLength, RequestError):
-            translated_query["text"] = text
+            translated_query["text"] = normalized_text or text
 
         translated_queries.append(translated_query)
 
