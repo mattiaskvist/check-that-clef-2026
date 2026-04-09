@@ -1,7 +1,7 @@
 import modal
 
-from .rerankers import Gemma2BReranker, NemotronReranker
-from .retrievers import BGEM3Retriever, HarrierRetriever, SparseRetriever
+from .rerankers import NemotronReranker
+from .retrievers import HarrierRetriever, SparseRetriever
 from .utils import CHECKTHAT_DATASET, FusionProcessor, MRR_at_5, article_to_text
 
 # ==========================================
@@ -26,7 +26,9 @@ image = (
 )
 
 app = modal.App("checkthat-evaluation-pipeline")
-embedding_cache = modal.Volume.from_name("checkthat-embedding-cache", create_if_missing=True)
+embedding_cache = modal.Volume.from_name(
+    "checkthat-embedding-cache", create_if_missing=True
+)
 
 CACHE_MOUNT = "/cache/embeddings"
 
@@ -63,13 +65,15 @@ def evaluate_pipeline():
     sparse_retriever.index(collection_dataset)
 
     # --- 3. PRE-ENCODE ALL QUERIES, THEN FREE EMBEDDING MODEL ---
-    languages = ["fr"]
+    languages = ["de", "fr", "en"]
     lang_tweets = {}
     for lang in languages:
         tweets = list(load_dataset(CHECKTHAT_DATASET, lang)["dev"])
         lang_tweets[lang] = tweets
         query_texts = [row["text"] for row in tweets]
-        dense_retriever.index_queries(query_texts, cache_dir=CACHE_MOUNT, cache_name=f"queries_{lang}")
+        dense_retriever.index_queries(
+            query_texts, cache_dir=CACHE_MOUNT, cache_name=f"queries_{lang}"
+        )
         embedding_cache.commit()
 
     dense_retriever.unload_model()
@@ -93,7 +97,9 @@ def evaluate_pipeline():
 
         dense_mrr, sparse_mrr, rrf_mrr, final_mrr = [], [], [], []
 
-        for i, row in enumerate(tqdm(tweets, desc=f"Evaluating {lang.upper()} Queries")):
+        for i, row in enumerate(
+            tqdm(tweets, desc=f"Evaluating {lang.upper()} Queries")
+        ):
             query_text = row["text"]
             true_pubkey = row["pubkey"]
 
