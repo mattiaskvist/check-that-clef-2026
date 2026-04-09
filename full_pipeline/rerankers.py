@@ -137,26 +137,13 @@ class NemotronReranker(BaseReranker):
         if self.model.config.pad_token_id is None:
             self.model.config.pad_token_id = self.tokenizer.eos_token_id
 
-    @staticmethod
-    def _document_to_text(doc: dict[str, str]) -> str:
-        text = f"Title: {doc.get('title', '')} | Abstract: {doc.get('abstract', '')}"
-        venue = str(doc.get("venue") or "").strip()
-        authors = str(doc.get("authors") or "").strip()
-
-        if venue:
-            text += f" | Venue: {venue}"
-        if authors:
-            text += f" | Authors: {authors}"
-
-        return text.strip()
-
     def rerank(
-        self, query: str, doc_indices: list[int], corpus: list[dict]
+        self, query: str, doc_indices: list[int], corpus: list[str]
     ) -> list[tuple[int, float]]:
         self._ensure_loaded()
 
         texts = [
-            f"question:{query} \n \n passage:{self._document_to_text(corpus[doc_id])}"
+            f"question:{query} \n \n passage:{corpus[doc_id]}"
             for doc_id in doc_indices
         ]
 

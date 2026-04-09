@@ -71,8 +71,10 @@ def evaluate_pipeline(
     collection_dataset = load_dataset(
         CHECKTHAT_DATASET, "collection", split="collection"
     )
-    article_texts = [article_to_text(doc) for doc in collection_dataset]
-    article_pubkeys = [doc["pubkey"] for doc in collection_dataset]
+    collection_documents = collection_dataset.to_list()
+    article_texts = [article_to_text(doc) for doc in collection_documents]
+    article_pubkeys = [doc["pubkey"] for doc in collection_documents]
+    reranker_corpus = reranker.preprocess_corpus(collection_documents)
 
     dense_retriever.index(
         article_texts,
@@ -192,7 +194,7 @@ def evaluate_pipeline(
             final_results = reranker.rerank(
                 query=query_text,
                 doc_indices=fused_candidates,
-                corpus=collection_dataset.to_list(),
+                corpus=reranker_corpus,
             )
             final_preds = [article_pubkeys[doc_id] for doc_id, score in final_results]
 
