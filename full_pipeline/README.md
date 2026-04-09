@@ -23,18 +23,36 @@ uv run modal secret create hf-token HF_TOKEN=hf_XXXXXXXXXXXXXXXXXXXXXXXXXXXX
 uv run modal run -d -m full_pipeline.main
 ```
 
+Sparse query rankings and scores are cached between runs (under the existing Modal volume mount), so reranking and fusion experiments can iterate without recomputing BM25 for each query.
+
+If you need to rebuild sparse cache artifacts after code changes, run:
+
+```bash
+uv run modal run -d -m full_pipeline.main --force-recompute-sparse-cache
+```
+
+Dense embeddings are also cached between runs. You can force dense recomputation independently:
+
+```bash
+# Recompute dense document embeddings
+uv run modal run -d -m full_pipeline.main --force-recompute-dense-documents
+
+# Recompute dense query embeddings
+uv run modal run -d -m full_pipeline.main --force-recompute-dense-queries
+```
+
 ## Current Stats on Dev
 
-Reported MRR@5 for the full pipeline on the dev set (combining dense retrieval, sparse retrieval, RRF fusion, and final re-ranking) is as follows:
+Reported metrics (MRR@5, R@5, R@10, R@30) for the full pipeline on the dev set are as follows:
 
-| Language / Group | n Tweets | Dense  | Sparse | RRF    | Rerank |
-|------------------|----------|--------|--------|--------|--------|
-| DE               | 386      | 0.4945 | 0.4047 | 0.5216 | 0.5459 |
-| FR               | 702      | 0.5704 | 0.5446 | 0.6194 | 0.6557 |
-| EN               | 3905     | 0.5600 | 0.5350 | 0.5937 | 0.6277 |
-| GLOBAL AVERAGE   | 4993     | 0.5564 | 0.5263 | 0.5918 | 0.6253 |
+| Language / Group | n Tweets | Dense (MRR@5 / R@5 / R@10 / R@30) | Sparse (MRR@5 / R@5 / R@10 / R@30) | RRF (MRR@5 / R@5 / R@10 / R@30) | Rerank (MRR@5 / R@5 / R@10 / R@30) |
+|------------------|----------|-----------------------------------|------------------------------------|---------------------------------|------------------------------------|
+| DE               | 386      | 0.5660 / 0.6684 / 0.7306 / 0.8342 | 0.4048 / 0.5000 / 0.5699 / 0.6477  | 0.5278 / - / 0.7047 / 0.8031    | 0.6004 / 0.7047 / - / -            |
+| FR               | 702      | 0.6732 / 0.7749 / 0.8219 / 0.8746 | 0.5446 / 0.6154 / 0.6538 / 0.7336  | 0.6318 / - / 0.7707 / 0.8561    | 0.7081 / 0.7949 / - / -            |
+| EN               | 3905     | 0.6771 / 0.7746 / 0.8246 / 0.8830 | 0.5388 / 0.6151 / 0.6553 / 0.7168  | 0.6200 / - / 0.7613 / 0.8530    | 0.7103 / 0.7880 / - / -            |
+| GLOBAL AVERAGE   | 4993     | 0.6680 / 0.7665 / 0.8169 / 0.8780 | 0.5293 / 0.6062 / 0.6485 / 0.7138  | 0.6146 / - / 0.7583 / 0.8496    | 0.7015 / 0.7825 / - / -            |
 
-Note: These numbers will need to be updated as we continue to refine the pipeline. The current results are based on the dev set, which we are treating as a validation set for iterative improvements.
+Note: These numbers will need to be updated as we continue to refine the pipeline. The current results are based on the dev set, which we are treating as a validation set for iterative improvements. Dashing indicates metrics not logged for that specific pipeline stage.
 
 ## Next Steps
 

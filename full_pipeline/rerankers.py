@@ -102,24 +102,31 @@ class Gemma2BReranker(BaseReranker):
 class NemotronReranker(BaseReranker):
     def __init__(
         self,
-        model_name: str = "nvidia/llama-nemotron-rerank-vl-1b-v2",
-        max_length: int = 8192,
+        model_name: str = "nvidia/llama-nemotron-rerank-1b-v2",
+        max_length: int = 2048,
     ):
         self.model_name = model_name
         self.max_length = max_length
         self.model = None
-        self.processor = None
+        self.tokenizer = None
 
     def _ensure_loaded(self):
         if self.model is not None:
             return
 
         import torch
-        from transformers import AutoModelForSequenceClassification, AutoProcessor
+        from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
         self.torch = torch
 
         print(f"Loading Cross-Encoder Reranker ({self.model_name}) to GPU...")
+
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.model_name, trust_remote_code=True, padding_side="left"
+        )
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+
         self.model = AutoModelForSequenceClassification.from_pretrained(
             self.model_name,
             torch_dtype=torch.bfloat16,
@@ -127,32 +134,36 @@ class NemotronReranker(BaseReranker):
             device_map="auto",
         ).eval()
 
-        self.processor = AutoProcessor.from_pretrained(
-            self.model_name,
-            trust_remote_code=True,
-            rerank_max_length=self.max_length,
-        )
+        if self.model.config.pad_token_id is None:
+            self.model.config.pad_token_id = self.tokenizer.eos_token_id
 
     def rerank(
         self, query: str, doc_indices: list[int], corpus: list[str]
     ) -> list[tuple[int, float]]:
         self._ensure_loaded()
 
-        examples = [
-            {"question": query, "doc_text": corpus[doc_id], "doc_image": ""}
-            for doc_id in doc_indices
+        texts = [
+            f"question:{query} \n \n passage:{corpus[doc_id]}" for doc_id in doc_indices
         ]
 
-        batch_dict = self.processor.process_queries_documents_crossencoder(examples)
-        batch_dict = {
-            k: v.to(self.model.device) if isinstance(v, self.torch.Tensor) else v
-            for k, v in batch_dict.items()
-        }
+        batch_dict = self.tokenizer(
+            texts,
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+            max_length=self.max_length,
+        )
+
+        batch_dict = {k: v.to(self.model.device) for k, v in batch_dict.items()}
 
         with self.torch.inference_mode():
-            logits = self.model(**batch_dict, return_dict=True).logits.squeeze(-1)
-            scores = logits.cpu().float().tolist()
+            logits = self.model(**batch_dict).logits
+            scores = logits.view(-1).cpu().float().tolist()
+
+        if not isinstance(scores, list):
+            scores = [scores]
 
         results = list(zip(doc_indices, scores))
         results.sort(key=lambda x: x[1], reverse=True)
+
         return results
