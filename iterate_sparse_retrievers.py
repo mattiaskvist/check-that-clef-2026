@@ -124,7 +124,17 @@ def translate_queries_to_english(queries: list[dict], source_lang: str) -> list[
 
         try:
             translated_text = translator.translate(text=normalized_text)
-            translated_query["text"] = f"{translated_text} {normalized_text}"
+            original_terms = [
+                tok
+                for tok in re.sub(r"[^\w\s]", " ", normalized_text.lower()).split()
+                if tok not in STOPWORDS and len(tok) >= 5
+            ]
+            filtered_original = " ".join(original_terms)
+            translated_query["text"] = (
+                f"{translated_text} {filtered_original}".strip()
+                if filtered_original
+                else translated_text
+            )
         except (TranslationNotFound, NotValidPayload, NotValidLength, RequestError):
             translated_query["text"] = text
 
