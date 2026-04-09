@@ -105,28 +105,39 @@ class NemotronReranker(BaseReranker):
         model_name: str = "nvidia/llama-nemotron-rerank-vl-1b-v2",
         max_length: int = 8192,
     ):
+        self.model_name = model_name
+        self.max_length = max_length
+        self.model = None
+        self.processor = None
+
+    def _ensure_loaded(self):
+        if self.model is not None:
+            return
+
         import torch
         from transformers import AutoModelForSequenceClassification, AutoProcessor
 
         self.torch = torch
 
-        print(f"Loading Cross-Encoder Reranker ({model_name}) to GPU...")
+        print(f"Loading Cross-Encoder Reranker ({self.model_name}) to GPU...")
         self.model = AutoModelForSequenceClassification.from_pretrained(
-            model_name,
+            self.model_name,
             torch_dtype=torch.bfloat16,
             trust_remote_code=True,
             device_map="auto",
         ).eval()
 
         self.processor = AutoProcessor.from_pretrained(
-            model_name,
+            self.model_name,
             trust_remote_code=True,
-            rerank_max_length=max_length,
+            rerank_max_length=self.max_length,
         )
 
     def rerank(
         self, query: str, doc_indices: list[int], corpus: list[str]
     ) -> list[tuple[int, float]]:
+        self._ensure_loaded()
+
         examples = [
             {"question": query, "doc_text": corpus[doc_id], "doc_image": ""}
             for doc_id in doc_indices
