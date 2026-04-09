@@ -19,6 +19,7 @@ image = (
         "transformers",
         "accelerate",
         "nltk",
+        "deep-translator",
     )
 )
 
