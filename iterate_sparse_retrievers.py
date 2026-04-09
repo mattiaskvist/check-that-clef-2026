@@ -52,8 +52,60 @@ class SparseRetriever(BaseRetriever):
         tokenized_corpus = [self.tokenize(text) for text in corpus]
         self.bm25_model = BM25Plus(tokenized_corpus, k1=2.5, b=0.85)
 
-    def search(self, query: str) -> list[int]:
-        tokenized_query = self.tokenize(query)
+    def _translate_query(self, text: str, lang: str = "auto") -> str:
+        """Helper function to translate non-English queries to English.
+        
+        Automatically detects language if lang='auto', otherwise uses the provided language code.
+
+        Args:
+            text (str): The original query text.
+            lang (str): The language code of the query (e.g., 'en', 'de', 'fr', 'auto').
+
+        Returns:
+            str: The translated query text if translation was successful, otherwise the original text.
+        """
+        if lang == "en":
+            return text
+
+        translator = GoogleTranslator(source=lang, target="en")
+
+        # Normalize text
+        normalized_text = re.sub(r"https?://\S+|www\.\S+|@\w+", " ", text)
+        normalized_text = re.sub(
+            r"[\U0001F300-\U0001FAFF\U00002700-\U000027BF\U000024C2-\U0001F251]+",
+            " ",
+            normalized_text,
+        )
+        normalized_text = normalized_text.replace("#", " ")
+        normalized_text = re.sub(r"\s+", " ", normalized_text).strip()
+
+        if not normalized_text:
+            return text
+
+        try:
+            translated_text = translator.translate(text=normalized_text)
+            original_terms: list[str] = []
+            seen: set[str] = set()
+
+            for tok in re.sub(r"[^\w\s]", " ", normalized_text.lower()).split():
+                if tok in seen or tok in STOPWORDS or len(tok) < 6 or not tok.isalpha():
+                    continue
+                seen.add(tok)
+                original_terms.append(tok)
+
+            filtered_original = " ".join(original_terms)
+            return (
+                f"{translated_text} {filtered_original}".strip()
+                if filtered_original
+                else translated_text
+            )
+        except (TranslationNotFound, NotValidPayload, NotValidLength, RequestError):
+            return normalized_text or text
+
+    def search(self, query: str, lang: str = "auto") -> list[int]:
+        """Translates the query if necessary, then performs BM25 search."""
+        translated_query = self._translate_query(query, lang)
+        tokenized_query = self.tokenize(translated_query)
         scores = self.bm25_model.get_scores(tokenized_query)
         return np.argsort(scores)[::-1].tolist()
 
@@ -82,13 +134,18 @@ class SparseRetriever(BaseRetriever):
 
 
 def top_k_pubkeys_for_queries(
-    model, queries: list[dict], article_pubkeys: list[str], k: int = 30
+    model,
+    queries: list[dict],
+    article_pubkeys: list[str],
+    lang: str = "en",
+    k: int = 30,
 ) -> list[list[str]]:
     top_k_preds: list[list[str]] = []
 
     # tqdm disabled to prevent context-window bloat in run.log
     for row in tqdm(queries, desc="Predicting", disable=True):
-        top_k_doc_indices = model.search(row["text"])[:k]
+        # Pass the language down to the search function
+        top_k_doc_indices = model.search(row["text"], lang=lang)[:k]
         top_k_preds.append([article_pubkeys[idx] for idx in top_k_doc_indices])
 
     return top_k_preds
@@ -110,52 +167,6 @@ def recall_at_k(preds: list[list[str]], targets: list[str], k: int = 30) -> floa
             hits += 1
 
     return hits / len(targets) if targets else 0.0
-
-
-def translate_queries_to_english(queries: list[dict], source_lang: str) -> list[dict]:
-    if source_lang == "en":
-        return queries
-
-    translator = GoogleTranslator(source=source_lang, target="en")
-    translated_queries: list[dict] = []
-    for query in queries:
-        translated_query = dict(query)
-        text = str(query["text"])
-        normalized_text = re.sub(r"https?://\S+|www\.\S+|@\w+", " ", text)
-        normalized_text = re.sub(
-            r"[\U0001F300-\U0001FAFF\U00002700-\U000027BF\U000024C2-\U0001F251]+",
-            " ",
-            normalized_text,
-        )
-        normalized_text = normalized_text.replace("#", " ")
-        normalized_text = re.sub(r"\s+", " ", normalized_text).strip()
-
-        if not normalized_text:
-            translated_query["text"] = text
-            translated_queries.append(translated_query)
-            continue
-
-        try:
-            translated_text = translator.translate(text=normalized_text)
-            original_terms: list[str] = []
-            seen: set[str] = set()
-            for tok in re.sub(r"[^\w\s]", " ", normalized_text.lower()).split():
-                if tok in seen or tok in STOPWORDS or len(tok) < 6 or not tok.isalpha():
-                    continue
-                seen.add(tok)
-                original_terms.append(tok)
-            filtered_original = " ".join(original_terms)
-            translated_query["text"] = (
-                f"{translated_text} {filtered_original}".strip()
-                if filtered_original
-                else translated_text
-            )
-        except (TranslationNotFound, NotValidPayload, NotValidLength, RequestError):
-            translated_query["text"] = normalized_text or text
-
-        translated_queries.append(translated_query)
-
-    return translated_queries
 
 
 def main() -> None:
@@ -187,11 +198,13 @@ def main() -> None:
         sampled_dataset = hf_dataset.shuffle(seed=42).select(range(safe_sample_size))
 
         queries = list(sampled_dataset)
-        queries = translate_queries_to_english(queries, lang)
         targets = [q["pubkey"] for q in queries]
         num_queries = len(queries)
 
-        top30_preds = top_k_pubkeys_for_queries(model, queries, article_pubkeys, k=30)
+        # Pass language to the top_k function so it delegates to the model
+        top30_preds = top_k_pubkeys_for_queries(
+            model, queries, article_pubkeys, lang=lang, k=30
+        )
         score = recall_at_k(preds=top30_preds, targets=targets, k=30)
 
         all_results.append(
