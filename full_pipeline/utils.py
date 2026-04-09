@@ -22,6 +22,11 @@ def MRR_at_5(preds: list[str], label: str) -> float:
         return 0.0
 
 
+def recall_at_K(predictions: list[str], target: str, k: int) -> float:
+    """Calculates Hit Rate @ K for a single query."""
+    return 1.0 if target in predictions[:k] else 0.0
+
+
 class FusionProcessor:
     @staticmethod
     def reciprocal_rank_fusion(
