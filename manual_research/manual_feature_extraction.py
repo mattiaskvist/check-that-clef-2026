@@ -159,18 +159,27 @@ def _paper_text(paper: dict) -> str:
 # ==========================================
 
 class HardIndicatorScorer(BaseScorer):
-    """Scores a (query, document) pair by counting how many hard indicator
-    types extracted from the query are present in the document.
+    """Scores a (query, document) pair based on hard indicators extracted from the query.
 
-    Returns a float in [0, len(EXTRACTORS)].
+    For each entity extracted from the query:
+    - If the entity is present in the document, score +1.
+    - If the entity is NOT present in the document, score -1 (penalize false positive).
+    
+    If no entities are extracted, the score is 0.
     """
 
     def score(self, query: str, document: str) -> float:
-        return float(sum(
-            1
-            for extractor_fn, strategy in EXTRACTORS.values()
-            if _matches(extractor_fn(query), document, strategy)
-        ))
+        total_score = 0.0
+        
+        for extractor_fn, strategy in EXTRACTORS.values():
+            entities = extractor_fn(query)
+            for entity in entities:
+                if _matches([entity], document, strategy):
+                    total_score += 1.0
+                else:
+                    total_score -= 1.0
+                    
+        return total_score
 
 
 # ==========================================
