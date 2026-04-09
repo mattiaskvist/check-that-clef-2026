@@ -25,6 +25,7 @@ disable_progress_bar()
 
 CHECKTHAT_DATASET = "sschellhammer/CT26_Task1_SourceRetrievalForScientificWebClaims"
 SAMPLE_SIZE = 500  # Stratified sample size per language
+QUERY_SPLITS = {"train", "dev"}
 
 
 class SparseRetriever(BaseRetriever):
@@ -98,6 +99,11 @@ def recall_at_k(preds: list[list[str]], targets: list[str], k: int = 30) -> floa
     Calculates Recall@K (Hit Rate) for single-target queries.
     Returns the percentage of queries where the target pubkey was in the top K predictions.
     """
+    if len(preds) != len(targets):
+        raise ValueError(
+            f"Prediction/target length mismatch: {len(preds)} preds vs {len(targets)} targets"
+        )
+
     hits = 0
     for pred_list, target in zip(preds, targets):
         if target in pred_list[:k]:
@@ -134,12 +140,7 @@ def translate_queries_to_english(queries: list[dict], source_lang: str) -> list[
             original_terms: list[str] = []
             seen: set[str] = set()
             for tok in re.sub(r"[^\w\s]", " ", normalized_text.lower()).split():
-                if (
-                    tok in seen
-                    or tok in STOPWORDS
-                    or len(tok) < 6
-                    or not tok.isalpha()
-                ):
+                if tok in seen or tok in STOPWORDS or len(tok) < 6 or not tok.isalpha():
                     continue
                 seen.add(tok)
                 original_terms.append(tok)
@@ -159,6 +160,10 @@ def translate_queries_to_english(queries: list[dict], source_lang: str) -> list[
 
 def main() -> None:
     split = "train"
+    if split not in QUERY_SPLITS:
+        raise ValueError(
+            f"Unsupported EVAL_SPLIT '{split}'. Use one of: {sorted(QUERY_SPLITS)}"
+        )
     collection = load_dataset(CHECKTHAT_DATASET, "collection", split="collection")
 
     article_pubkeys = [doc["pubkey"] for doc in collection]
@@ -174,13 +179,13 @@ def main() -> None:
     for lang in ["de", "fr", "en"]:
         # Load full language dataset
         hf_dataset = load_dataset(CHECKTHAT_DATASET, lang, split=split)
-        
+
         # Safely cap at SAMPLE_SIZE in case a train set is slightly under 500
         safe_sample_size = min(SAMPLE_SIZE, len(hf_dataset))
-        
+
         # Shuffle with a fixed seed and select the sample
         sampled_dataset = hf_dataset.shuffle(seed=42).select(range(safe_sample_size))
-        
+
         queries = list(sampled_dataset)
         queries = translate_queries_to_english(queries, lang)
         targets = [q["pubkey"] for q in queries]
@@ -196,11 +201,13 @@ def main() -> None:
         # Keep a minimal log for humans reading the run.log
         print(f"{lang.upper()} Recall@30: {score:.6f} (Subset Queries: {num_queries})")
 
-    # Calculate the query-weighted average 
+    # Calculate the query-weighted average
     total_queries = sum(r["num_queries"] for r in all_results)
     total_recall_sum = sum(r["recall30"] * r["num_queries"] for r in all_results)
 
-    balanced_avg_recall30 = total_recall_sum / total_queries if total_queries > 0 else 0.0
+    balanced_avg_recall30 = (
+        total_recall_sum / total_queries if total_queries > 0 else 0.0
+    )
 
     # The distinct target line for the autoresearch agent
     print(f"RECALL@30: {balanced_avg_recall30:.6f}")
