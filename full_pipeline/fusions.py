@@ -38,14 +38,15 @@ class ScoreFusionProcessor:
         "reranker_rank",
     ]
 
-    def __init__(self, xgb_params: dict | None = None):
+    def __init__(self, lgb_params: dict | None = None):
         self.model = None
-        self.params = xgb_params or {
-            "objective": "binary:logistic",
-            "eval_metric": "logloss",
-            "max_depth": 4,
+        self.params = lgb_params or {
+            "objective": "lambdarank",
+            "metric": "ndcg",
             "learning_rate": 0.1,
             "n_estimators": 200,
+            "num_leaves": 31,
+            "min_data_in_leaf": 10,
         }
 
     @staticmethod
@@ -116,45 +117,46 @@ class ScoreFusionProcessor:
 
         return features
 
-    def train(self, X: np.ndarray, y: np.ndarray):
-        """Train XGBoost binary classifier.
+    def train(self, X: np.ndarray, y: np.ndarray, group: np.ndarray | list[int]):
+        """Train LightGBM LambdaMART ranker.
 
         Args:
             X: feature matrix of shape (n_samples, 8).
             y: binary labels of shape (n_samples,).
+            group: array of group sizes (number of candidates per query).
         """
-        from xgboost import XGBClassifier
+        import lightgbm as lgb
 
-        clf = XGBClassifier(**self.params)
-        clf.fit(X, y)
+        clf = lgb.LGBMRanker(**self.params)
+        clf.fit(X, y, group=group)
         self.model = clf
 
         # Print feature importances
         importances = clf.feature_importances_
-        print("\n[XGBoost] Feature importances:")
+        print("\n[LightGBM] Feature importances:")
         for name, imp in sorted(
             zip(self.FEATURE_NAMES, importances), key=lambda x: x[1], reverse=True
         ):
-            print(f"  {name:20s} {imp:.4f}")
+            print(f"  {name:20s} {imp}")
 
     def predict_and_rerank(
         self, candidate_doc_ids: list[int], features: list[list[float]]
     ) -> list[tuple[int, float]]:
-        """Predict P(correct) for each candidate and return sorted descending.
+        """Predict LambdaMART score for each candidate and return sorted descending.
 
         Args:
             candidate_doc_ids: list of doc IDs.
             features: list of feature vectors (same order as candidate_doc_ids).
 
         Returns:
-            list of (doc_id, probability) sorted by probability descending.
+            list of (doc_id, score) sorted by score descending.
         """
         if self.model is None:
             raise RuntimeError("Model not trained yet — call train() first.")
 
         X = np.array(features)
-        probs = self.model.predict_proba(X)[:, 1]  # P(correct=1)
+        scores = self.model.predict(X)
 
-        results = list(zip(candidate_doc_ids, probs.tolist()))
+        results = list(zip(candidate_doc_ids, scores.tolist()))
         results.sort(key=lambda x: x[1], reverse=True)
         return results

@@ -23,7 +23,7 @@ image = (
         "Pillow",
         "torchvision",
         "deep-translator",
-        "xgboost",
+        "lightgbm",
         "scikit-learn",
     )
 )
@@ -41,7 +41,7 @@ CACHE_MOUNT = "/cache/embeddings"
 # ==========================================
 @app.function(
     image=image,
-    gpu="A100-40GB",
+    gpu="A100-80GB",
     timeout=60 * 60 * 3,
     secrets=[modal.Secret.from_name("hf-token")],
     volumes={CACHE_MOUNT: embedding_cache},
@@ -53,7 +53,7 @@ def evaluate_pipeline():
     from tqdm import tqdm
 
     # --- INITIALIZE COMPONENTS ---
-    dense_retriever = BGEM3Retriever()
+    dense_retriever = HarrierRetriever()
     sparse_retriever = SparseRetriever()
     reranker = Gemma2BReranker()
     fusion = FusionProcessor()
@@ -94,8 +94,8 @@ def evaluate_pipeline():
         "final_sum": 0.0,
     }
 
-    # Storage for XGBoost data collection
-    all_xgb_data = []  # list of dicts per query
+    # Storage for LightGBM data collection
+    all_lgb_data = []  # list of dicts per query
 
     for lang in languages:
         print("\n==========================================")
@@ -149,7 +149,7 @@ def evaluate_pipeline():
                 )
             )
 
-            # Step D: Collect features for XGBoost
+            # Step D: Collect features for LightGBM
             features = ScoreFusionProcessor.build_query_features(
                 candidates=fused_candidates,
                 dense_scores=dense_scores,
@@ -167,7 +167,7 @@ def evaluate_pipeline():
                 for doc_id in fused_candidates
             ]
 
-            all_xgb_data.append(
+            all_lgb_data.append(
                 {
                     "lang": lang,
                     "query_idx": i,
@@ -236,27 +236,29 @@ def evaluate_pipeline():
     print("==================================================\n")
 
     # ==========================================
-    # 5. XGBOOST FUSION: TRAIN & EVALUATE
+    # 5. LIGHTGBM FUSION: TRAIN & EVALUATE
     # ==========================================
     print("\n" + "=" * 50)
-    print("  XGBOOST SCORE FUSION — TRAINING & EVALUATION")
+    print("  LIGHTGBM SCORE FUSION — TRAINING & EVALUATION")
     print("=" * 50)
 
     # Split at query level (80% train, 20% test)
-    query_indices = list(range(len(all_xgb_data)))
+    query_indices = list(range(len(all_lgb_data)))
     train_indices, test_indices = train_test_split(
         query_indices, test_size=0.2, random_state=42
     )
 
     # Build training data
-    X_train_list, y_train_list = [], []
+    X_train_list, y_train_list, group_train_list = [], [], []
     for idx in train_indices:
-        entry = all_xgb_data[idx]
+        entry = all_lgb_data[idx]
         X_train_list.extend(entry["features"])
         y_train_list.extend(entry["labels"])
+        group_train_list.append(len(entry["candidates"]))
 
     X_train = np.array(X_train_list, dtype=np.float32)
     y_train = np.array(y_train_list, dtype=np.float32)
+    group_train = np.array(group_train_list, dtype=np.int32)
 
     print(f"\nTraining set: {len(train_indices)} queries, {len(X_train)} samples")
     print(
@@ -265,13 +267,13 @@ def evaluate_pipeline():
     print(f"Test set:     {len(test_indices)} queries")
 
     # Train the model
-    score_fusion.train(X_train, y_train)
+    score_fusion.train(X_train, y_train, group=group_train)
 
     # ==========================================
-    # 6. EVALUATE XGBOOST ON TEST SPLIT
+    # 6. EVALUATE LIGHTGBM ON TEST SPLIT
     # ==========================================
     print("\n" + "-" * 50)
-    print("  XGBOOST TEST SET EVALUATION (20% Held-Out)")
+    print("  LIGHTGBM LAMBDAMART TEST SET EVALUATION (20% Held-Out)")
     print("-" * 50)
 
     # Per-language tracking for fair comparison on the test split
@@ -281,39 +283,39 @@ def evaluate_pipeline():
             "sparse_mrrs": [],
             "rrf_mrrs": [],
             "rerank_mrrs": [],
-            "xgb_mrrs": [],
+            "lgb_mrrs": [],
         }
         for lang in languages
     }
 
     for idx in test_indices:
-        entry = all_xgb_data[idx]
+        entry = all_lgb_data[idx]
         lang = entry["lang"]
         true_pubkey = entry["true_pubkey"]
 
-        # XGBoost prediction and reranking
-        xgb_results = score_fusion.predict_and_rerank(
+        # LightGBM prediction and reranking
+        lgb_results = score_fusion.predict_and_rerank(
             entry["candidates"], entry["features"]
         )
         # Build doc_id → pubkey lookup for this query's candidates
         docid_to_pubkey = dict(
             zip(entry["candidates"], entry["candidate_pubkeys"])
         )
-        xgb_preds = [docid_to_pubkey[doc_id] for doc_id, _ in xgb_results]
-        xgb_mrr = MRR_at_5(xgb_preds, true_pubkey)
+        lgb_preds = [docid_to_pubkey[doc_id] for doc_id, _ in lgb_results]
+        lgb_mrr = MRR_at_5(lgb_preds, true_pubkey)
 
         test_metrics[lang]["dense_mrrs"].append(entry["dense_mrr"])
         test_metrics[lang]["sparse_mrrs"].append(entry["sparse_mrr"])
         test_metrics[lang]["rrf_mrrs"].append(entry["rrf_mrr"])
         test_metrics[lang]["rerank_mrrs"].append(entry["rerank_mrr"])
-        test_metrics[lang]["xgb_mrrs"].append(xgb_mrr)
+        test_metrics[lang]["lgb_mrrs"].append(lgb_mrr)
 
     # Compute and print test-split comparison
-    all_dense, all_sparse, all_rrf, all_rerank, all_xgb = [], [], [], [], []
+    all_dense, all_sparse, all_rrf, all_rerank, all_lgb = [], [], [], [], []
 
     for lang in languages:
         m = test_metrics[lang]
-        n = len(m["xgb_mrrs"])
+        n = len(m["lgb_mrrs"])
         if n == 0:
             continue
 
@@ -321,29 +323,29 @@ def evaluate_pipeline():
         avg_s = sum(m["sparse_mrrs"]) / n
         avg_r = sum(m["rrf_mrrs"]) / n
         avg_re = sum(m["rerank_mrrs"]) / n
-        avg_x = sum(m["xgb_mrrs"]) / n
+        avg_x = sum(m["lgb_mrrs"]) / n
 
         all_dense.extend(m["dense_mrrs"])
         all_sparse.extend(m["sparse_mrrs"])
         all_rrf.extend(m["rrf_mrrs"])
         all_rerank.extend(m["rerank_mrrs"])
-        all_xgb.extend(m["xgb_mrrs"])
+        all_lgb.extend(m["lgb_mrrs"])
 
         print(f"\n  [{lang.upper()}] — {n} Test Queries")
         print(f"    ├─ Dense Only:      {avg_d:.4f}")
         print(f"    ├─ Sparse Only:     {avg_s:.4f}")
         print(f"    ├─ RRF Output:      {avg_r:.4f}")
         print(f"    ├─ Reranker:        {avg_re:.4f}")
-        print(f"    └─ XGBoost Fusion:  {avg_x:.4f}")
+        print(f"    └─ LightGBM Ranker: {avg_x:.4f}")
 
     # Global test-split averages
-    n_test = len(all_xgb)
+    n_test = len(all_lgb)
     print(f"\n  [GLOBAL TEST AVERAGE] — {n_test} Queries")
     print(f"    ├─ Dense Only:      {sum(all_dense) / n_test:.4f}")
     print(f"    ├─ Sparse Only:     {sum(all_sparse) / n_test:.4f}")
     print(f"    ├─ RRF Output:      {sum(all_rrf) / n_test:.4f}")
     print(f"    ├─ Reranker:        {sum(all_rerank) / n_test:.4f}")
-    print(f"    └─ XGBoost Fusion:  {sum(all_xgb) / n_test:.4f}")
+    print(f"    └─ LightGBM Ranker: {sum(all_lgb) / n_test:.4f}")
     print("=" * 50 + "\n")
 
 
