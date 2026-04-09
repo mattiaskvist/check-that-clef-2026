@@ -4,13 +4,14 @@ from datasets import load_dataset
 from rank_bm25 import BM25Okapi
 from tqdm import tqdm
 import nltk
+import string
 from nltk.corpus import stopwords
 from nltk.stem import LancasterStemmer
-import string
+from deep_translator import GoogleTranslator
 
 
 # Config
-EXPERIMENT_COUNT = 13
+EXPERIMENT_COUNT = 17
 LANG = "en"
 PERCENT = 5
 TOP_K = 50
@@ -36,6 +37,11 @@ def tokenize(text):
     translator = str.maketrans(string.punctuation, " " * len(string.punctuation))
     clean_text = text.lower().translate(translator)
     tokens = [stemmer.stem(t) for t in clean_text.split() if t not in MULTILINGUAL_STOPWORDS]
+    bigrams = [
+        tokens[i] + "_" + tokens[i+1]
+        for i in range(len(tokens)-1)
+    ]
+    tokens.extend(bigrams)
     return tokens
 
 
@@ -106,7 +112,15 @@ def evaluate(bm25, queries, article_pubkeys):
 
     for tweet in tqdm(queries, leave=False):
 
-        query = tokenize(tweet["text"])
+        text = tweet["text"]
+
+        if LANG != "en":
+            try:
+                text = GoogleTranslator(source=LANG, target="en").translate(text)
+            except:
+                pass
+
+        query = tokenize(text)
         label = tweet["pubkey"]
 
         scores = bm25.get_scores(query)
