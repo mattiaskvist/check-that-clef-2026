@@ -59,15 +59,23 @@ class BGEM3Retriever(BaseRetriever):
         return digest.hexdigest()[:16]
 
     def _load_or_encode(
-        self, texts: list[str], encode_fn, cache_path: str | None, label: str
+        self,
+        texts: list[str],
+        encode_fn,
+        cache_path: str | None,
+        label: str,
+        force_recompute: bool = False,
     ):
         import os
 
-        if cache_path and os.path.exists(cache_path):
+        if cache_path and os.path.exists(cache_path) and not force_recompute:
             print(f"[cache hit] Loading {label} from {cache_path}")
             embs = self.torch.load(cache_path, map_location="cuda", weights_only=True)
             print(f"Loaded {embs.shape[0]} cached {label}.")
             return embs
+
+        if force_recompute and cache_path and os.path.exists(cache_path):
+            print(f"[cache bypass] Recomputing {label} from source texts.")
 
         print(f"Encoding {len(texts)} {label}...")
         embs = encode_fn(
@@ -94,10 +102,19 @@ class BGEM3Retriever(BaseRetriever):
             return os.path.join(cache_dir, self._cache_key(), filename)
         return None
 
-    def index(self, corpus: list[str], cache_dir: str | None = None):
+    def index(
+        self,
+        corpus: list[str],
+        cache_dir: str | None = None,
+        force_recompute: bool = False,
+    ):
         path = self._cache_path(cache_dir, "documents.pt", corpus)
         self.embeddings = self._load_or_encode(
-            corpus, self.model.encode_document, path, "document embeddings"
+            corpus,
+            self.model.encode_document,
+            path,
+            "document embeddings",
+            force_recompute=force_recompute,
         )
 
     def index_queries(
@@ -105,6 +122,7 @@ class BGEM3Retriever(BaseRetriever):
         queries: list[str],
         cache_dir: str | None = None,
         cache_name: str = "queries",
+        force_recompute: bool = False,
     ):
         path = self._cache_path(cache_dir, f"{cache_name}.pt", queries)
         query_embeddings = self._load_or_encode(
@@ -112,6 +130,7 @@ class BGEM3Retriever(BaseRetriever):
             self.model.encode_query,
             path,
             f"query embeddings ({cache_name})",
+            force_recompute=force_recompute,
         )
         self.query_embeddings = query_embeddings
         self._query_embeddings_by_name[cache_name] = query_embeddings
@@ -179,15 +198,23 @@ class HarrierRetriever(BaseRetriever):
         return None
 
     def _load_or_encode(
-        self, texts: list[str], cache_path: str | None, label: str, **encode_kwargs
+        self,
+        texts: list[str],
+        cache_path: str | None,
+        label: str,
+        force_recompute: bool = False,
+        **encode_kwargs,
     ):
         import os
 
-        if cache_path and os.path.exists(cache_path):
+        if cache_path and os.path.exists(cache_path) and not force_recompute:
             print(f"[cache hit] Loading {label} from {cache_path}")
             embs = self.torch.load(cache_path, map_location="cuda", weights_only=True)
             print(f"Loaded {embs.shape[0]} cached {label}.")
             return embs
+
+        if force_recompute and cache_path and os.path.exists(cache_path):
+            print(f"[cache bypass] Recomputing {label} from source texts.")
 
         print(f"Encoding {len(texts)} {label}...")
         embs = self.model.encode(
@@ -206,21 +233,33 @@ class HarrierRetriever(BaseRetriever):
 
         return embs
 
-    def index(self, corpus: list[str], cache_dir: str | None = None):
+    def index(
+        self,
+        corpus: list[str],
+        cache_dir: str | None = None,
+        force_recompute: bool = False,
+    ):
         path = self._cache_path(cache_dir, "documents.pt", corpus)
-        self.embeddings = self._load_or_encode(corpus, path, "document embeddings")
+        self.embeddings = self._load_or_encode(
+            corpus,
+            path,
+            "document embeddings",
+            force_recompute=force_recompute,
+        )
 
     def index_queries(
         self,
         queries: list[str],
         cache_dir: str | None = None,
         cache_name: str = "queries",
+        force_recompute: bool = False,
     ):
         path = self._cache_path(cache_dir, f"{cache_name}.pt", queries)
         query_embeddings = self._load_or_encode(
             queries,
             path,
             f"query embeddings ({cache_name})",
+            force_recompute=force_recompute,
             prompt_name="web_search_query",
         )
         self.query_embeddings = query_embeddings

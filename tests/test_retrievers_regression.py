@@ -1,5 +1,6 @@
 import math
 import os
+import pickle
 import tempfile
 import unittest
 
@@ -21,6 +22,16 @@ class _FakeTorch:
         )
         return _SortResult(indices)
 
+    @staticmethod
+    def save(value, path):
+        with open(path, "wb") as file:
+            pickle.dump(value, file)
+
+    @staticmethod
+    def load(path, map_location=None, weights_only=False):
+        with open(path, "rb") as file:
+            return pickle.load(file)
+
 
 class _FakeUtil:
     @staticmethod
@@ -34,6 +45,18 @@ class _FakeUtil:
             score = sum(q * d for q, d in zip(query, emb)) / (q_norm * _norm(emb))
             scores.append(score)
         return [scores]
+
+
+class _CountingEncodeModel:
+    def __init__(self):
+        self.encode_calls = 0
+
+    def encode(self, texts, **kwargs):
+        self.encode_calls += 1
+        return np.asarray(
+            [[float(self.encode_calls), float(idx)] for idx in range(len(texts))],
+            dtype=np.float32,
+        )
 
 
 class HarrierRetrieverRegressionTests(unittest.TestCase):
@@ -61,6 +84,72 @@ class HarrierRetrieverRegressionTests(unittest.TestCase):
 
         self.assertNotEqual(path_a, path_b)
         self.assertEqual(path_a, path_a_repeat)
+
+    def test_force_recompute_rebuilds_document_cache(self):
+        retriever = HarrierRetriever.__new__(HarrierRetriever)
+        retriever.model_name = "microsoft/harrier-oss-v1-27b"
+        retriever.batch_size = 2
+        retriever.torch = _FakeTorch
+        retriever.model = _CountingEncodeModel()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            corpus = ["doc-a", "doc-b"]
+
+            retriever.index(corpus, cache_dir=tmpdir, force_recompute=False)
+            self.assertEqual(retriever.model.encode_calls, 1)
+            self.assertEqual(retriever.embeddings[0][0], 1.0)
+
+            retriever.index(corpus, cache_dir=tmpdir, force_recompute=False)
+            self.assertEqual(retriever.model.encode_calls, 1)
+            self.assertEqual(retriever.embeddings[0][0], 1.0)
+
+            retriever.index(corpus, cache_dir=tmpdir, force_recompute=True)
+            self.assertEqual(retriever.model.encode_calls, 2)
+            self.assertEqual(retriever.embeddings[0][0], 2.0)
+
+    def test_force_recompute_rebuilds_query_cache(self):
+        retriever = HarrierRetriever.__new__(HarrierRetriever)
+        retriever.model_name = "microsoft/harrier-oss-v1-27b"
+        retriever.batch_size = 2
+        retriever.torch = _FakeTorch
+        retriever.model = _CountingEncodeModel()
+        retriever._query_embeddings_by_name = {}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            queries = ["query-a", "query-b"]
+
+            retriever.index_queries(
+                queries,
+                cache_dir=tmpdir,
+                cache_name="queries_en",
+                force_recompute=False,
+            )
+            self.assertEqual(retriever.model.encode_calls, 1)
+            self.assertEqual(
+                retriever._query_embeddings_by_name["queries_en"][0][0], 1.0
+            )
+
+            retriever.index_queries(
+                queries,
+                cache_dir=tmpdir,
+                cache_name="queries_en",
+                force_recompute=False,
+            )
+            self.assertEqual(retriever.model.encode_calls, 1)
+            self.assertEqual(
+                retriever._query_embeddings_by_name["queries_en"][0][0], 1.0
+            )
+
+            retriever.index_queries(
+                queries,
+                cache_dir=tmpdir,
+                cache_name="queries_en",
+                force_recompute=True,
+            )
+            self.assertEqual(retriever.model.encode_calls, 2)
+            self.assertEqual(
+                retriever._query_embeddings_by_name["queries_en"][0][0], 2.0
+            )
 
 
 class _FakeBM25:

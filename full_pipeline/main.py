@@ -49,7 +49,11 @@ CACHE_MOUNT = "/cache/embeddings"
     secrets=[modal.Secret.from_name("hf-token")],
     volumes={CACHE_MOUNT: embedding_cache},
 )
-def evaluate_pipeline(force_recompute_sparse_cache: bool = False):
+def evaluate_pipeline(
+    force_recompute_sparse_cache: bool = False,
+    force_recompute_dense_documents: bool = False,
+    force_recompute_dense_queries: bool = False,
+):
     from datasets import load_dataset
     from tqdm import tqdm
 
@@ -70,7 +74,11 @@ def evaluate_pipeline(force_recompute_sparse_cache: bool = False):
     article_texts = [article_to_text(doc) for doc in collection_dataset]
     article_pubkeys = [doc["pubkey"] for doc in collection_dataset]
 
-    dense_retriever.index(article_texts, cache_dir=CACHE_MOUNT)
+    dense_retriever.index(
+        article_texts,
+        cache_dir=CACHE_MOUNT,
+        force_recompute=force_recompute_dense_documents,
+    )
     embedding_cache.commit()
     sparse_retriever.index(collection_dataset)
 
@@ -82,7 +90,10 @@ def evaluate_pipeline(force_recompute_sparse_cache: bool = False):
         lang_tweets[lang] = tweets
         query_texts = [row["text"] for row in tweets]
         dense_retriever.index_queries(
-            query_texts, cache_dir=CACHE_MOUNT, cache_name=f"queries_{lang}"
+            query_texts,
+            cache_dir=CACHE_MOUNT,
+            cache_name=f"queries_{lang}",
+            force_recompute=force_recompute_dense_queries,
         )
         sparse_retriever.index_queries(
             query_texts,
@@ -264,5 +275,13 @@ def evaluate_pipeline(force_recompute_sparse_cache: bool = False):
 
 
 @app.local_entrypoint()
-def main(force_recompute_sparse_cache: bool = False):
-    evaluate_pipeline.remote(force_recompute_sparse_cache=force_recompute_sparse_cache)
+def main(
+    force_recompute_sparse_cache: bool = False,
+    force_recompute_dense_documents: bool = False,
+    force_recompute_dense_queries: bool = False,
+):
+    evaluate_pipeline.remote(
+        force_recompute_sparse_cache=force_recompute_sparse_cache,
+        force_recompute_dense_documents=force_recompute_dense_documents,
+        force_recompute_dense_queries=force_recompute_dense_queries,
+    )

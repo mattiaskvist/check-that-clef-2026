@@ -31,6 +31,16 @@ If you need to rebuild sparse cache artifacts after code changes, run:
 uv run modal run -d -m full_pipeline.main --force-recompute-sparse-cache
 ```
 
+Dense embeddings are also cached between runs. You can force dense recomputation independently:
+
+```bash
+# Recompute dense document embeddings
+uv run modal run -d -m full_pipeline.main --force-recompute-dense-documents
+
+# Recompute dense query embeddings
+uv run modal run -d -m full_pipeline.main --force-recompute-dense-queries
+```
+
 ## Current Stats on Dev
 
 Reported MRR@5 for the full pipeline on the dev set (combining dense retrieval, sparse retrieval, RRF fusion, and final re-ranking) is as follows:
