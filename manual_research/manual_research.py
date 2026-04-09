@@ -11,9 +11,9 @@ from deep_translator import GoogleTranslator
 
 
 # Config
-EXPERIMENT_COUNT = 17
-LANG = "en"
-PERCENT = 5
+EXPERIMENT_COUNT = 5
+LANG = "fr"
+PERCENT = 10
 TOP_K = 50
 K_VALUES = [3,5,25,50]
 
@@ -116,7 +116,7 @@ def evaluate(bm25, queries, article_pubkeys):
 
         if LANG != "en":
             try:
-                text = GoogleTranslator(source=LANG, target="en").translate(text)
+                text = text + GoogleTranslator(source=LANG, target="en").translate(text)
             except:
                 pass
 
