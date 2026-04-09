@@ -189,7 +189,11 @@ def evaluate_pipeline(
             )
 
             # Step C: Reranking
-            final_results = reranker.rerank(query_text, fused_candidates, article_texts)
+            final_results = reranker.rerank(
+                query=query_text,
+                doc_indices=fused_candidates,
+                corpus=collection_dataset.to_list(),
+            )
             final_preds = [article_pubkeys[doc_id] for doc_id, score in final_results]
 
             lang_metrics["final"]["mrr5"].append(MRR_at_5(final_preds, true_pubkey))
