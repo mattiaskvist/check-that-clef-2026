@@ -1,7 +1,7 @@
 import modal
 
-from .rerankers import Gemma2BReranker
-from .retrievers import BGEM3Retriever, SparseRetriever
+from .rerankers import NemotronReranker
+from .retrievers import HarrierRetriever, SparseRetriever
 from .utils import (
     CHECKTHAT_DATASET,
     FusionProcessor,
@@ -25,11 +25,18 @@ image = (
         "transformers",
         "accelerate",
         "nltk",
+        "Pillow",
+        "torchvision",
         "deep-translator",
     )
 )
 
 app = modal.App("checkthat-evaluation-pipeline")
+embedding_cache = modal.Volume.from_name(
+    "checkthat-embedding-cache", create_if_missing=True
+)
+
+CACHE_MOUNT = "/cache/embeddings"
 
 
 # ==========================================
@@ -37,20 +44,19 @@ app = modal.App("checkthat-evaluation-pipeline")
 # ==========================================
 @app.function(
     image=image,
-    gpu="A100-40GB",
+    gpu="A100-80GB",
     timeout=60 * 60 * 2,
     secrets=[modal.Secret.from_name("hf-token")],
+    volumes={CACHE_MOUNT: embedding_cache},
 )
 def evaluate_pipeline():
     from datasets import load_dataset
     from tqdm import tqdm
 
     # --- INITIALIZE COMPONENTS ---
-    dense_retriever = BGEM3Retriever(
-        lora_id="boyes-boys-clef-2026/bge-m3-checkthat-finetuned"
-    )
+    dense_retriever = HarrierRetriever()
     sparse_retriever = SparseRetriever()
-    reranker = Gemma2BReranker()
+    reranker = NemotronReranker()
     fusion = FusionProcessor()
     FUSION_TOP_K = 30  # Number of candidates to fuse and rerank
 
@@ -61,11 +67,25 @@ def evaluate_pipeline():
     article_texts = [article_to_text(doc) for doc in collection_dataset]
     article_pubkeys = [doc["pubkey"] for doc in collection_dataset]
 
-    dense_retriever.index(article_texts)
+    dense_retriever.index(article_texts, cache_dir=CACHE_MOUNT)
+    embedding_cache.commit()
     sparse_retriever.index(collection_dataset)
 
-    # --- 3. EVALUATION LOOP ---
+    # --- 3. PRE-ENCODE ALL QUERIES, THEN FREE EMBEDDING MODEL ---
     languages = ["de", "fr", "en"]
+    lang_tweets = {}
+    for lang in languages:
+        tweets = list(load_dataset(CHECKTHAT_DATASET, lang)["dev"])
+        lang_tweets[lang] = tweets
+        query_texts = [row["text"] for row in tweets]
+        dense_retriever.index_queries(
+            query_texts, cache_dir=CACHE_MOUNT, cache_name=f"queries_{lang}"
+        )
+        embedding_cache.commit()
+
+    dense_retriever.unload_model()
+
+    # --- 4. EVALUATION LOOP ---
     global_results = {}
 
     # Initialize global tracking dictionaries
@@ -82,7 +102,7 @@ def evaluate_pipeline():
         print(f"  STARTING EVALUATION FOR LANGUAGE: {lang.upper()}")
         print("==========================================")
 
-        tweets = list(load_dataset(CHECKTHAT_DATASET, lang)["dev"])
+        tweets = lang_tweets[lang]
 
         # Trackers for the current language
         lang_metrics = {
@@ -92,12 +112,14 @@ def evaluate_pipeline():
             "final": {"mrr5": [], "r5": []},
         }
 
-        for row in tqdm(tweets, desc=f"Evaluating {lang.upper()} Queries"):
+        for i, row in enumerate(
+            tqdm(tweets, desc=f"Evaluating {lang.upper()} Queries")
+        ):
             query_text = row["text"]
             true_pubkey = row["pubkey"]
 
             # Step A: Independent Retrieval
-            dense_ranks = dense_retriever.search(query_text)
+            dense_ranks = dense_retriever.search(i, cache_name=f"queries_{lang}")
             sparse_ranks = sparse_retriever.search(query_text)
 
             dense_preds = [article_pubkeys[doc_id] for doc_id in dense_ranks]

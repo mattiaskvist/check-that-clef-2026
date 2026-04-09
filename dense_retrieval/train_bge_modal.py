@@ -18,7 +18,7 @@ volume = modal.Volume.from_name("clef-vol", create_if_missing=True)
 # 3. Define the training function and request GPU resources
 @app.function(
     image=image,
-    gpu="A100-80GB",
+    gpu="A100-40GB",
     timeout=60 * 60 * 12,  # Set a 12-hour timeout limit
     volumes={"/data": volume},  # Mount the persistent volume to the /data directory
     secrets=[modal.Secret.from_name("hf-token")],

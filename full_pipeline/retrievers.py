@@ -17,7 +17,6 @@ from .utils import STOPWORDS
 
 class BGEM3Retriever(BaseRetriever):
     def __init__(self, model_name: str = "BAAI/bge-m3", lora_id: str = None):
-        # Heavy imports happen safely inside the cloud!
         import os
 
         import torch
@@ -26,6 +25,10 @@ class BGEM3Retriever(BaseRetriever):
 
         self.util = util
         self.torch = torch
+        self.model_name = model_name
+        self.lora_id = lora_id
+        self.query_embeddings = None
+        self._query_embeddings_by_name = {}
 
         print(f"Loading Dense Retriever ({model_name})...")
         self.model = SentenceTransformer(model_name, device="cuda")
@@ -38,15 +41,214 @@ class BGEM3Retriever(BaseRetriever):
             )
             self.model = self.model.to("cuda")
 
-    def index(self, corpus: list[str]):
-        print("Generating dense embeddings for the collection...")
-        self.embeddings = self.model.encode_document(
-            corpus, convert_to_tensor=True, show_progress_bar=True, device="cuda"
+    def _cache_key(self) -> str:
+        key = self.model_name.replace("/", "--")
+        if self.lora_id:
+            key += f"+{self.lora_id.replace('/', '--')}"
+        return key
+
+    @staticmethod
+    def _texts_fingerprint(texts: list[str]) -> str:
+        import hashlib
+
+        digest = hashlib.sha256()
+        for text in texts:
+            encoded = text.encode("utf-8", errors="ignore")
+            digest.update(len(encoded).to_bytes(8, "little", signed=False))
+            digest.update(encoded)
+        return digest.hexdigest()[:16]
+
+    def _load_or_encode(
+        self, texts: list[str], encode_fn, cache_path: str | None, label: str
+    ):
+        import os
+
+        if cache_path and os.path.exists(cache_path):
+            print(f"[cache hit] Loading {label} from {cache_path}")
+            embs = self.torch.load(cache_path, map_location="cuda", weights_only=True)
+            print(f"Loaded {embs.shape[0]} cached {label}.")
+            return embs
+
+        print(f"Encoding {len(texts)} {label}...")
+        embs = encode_fn(
+            texts, convert_to_tensor=True, show_progress_bar=True, device="cuda"
         )
 
-    def search(self, query: str) -> list[int]:
-        query_embedding = self.model.encode_query(query, convert_to_tensor=True)
-        scores = self.util.cos_sim(query_embedding, self.embeddings)[0]
+        if cache_path:
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            self.torch.save(embs, cache_path)
+            print(f"[cache miss] Saved {label} to {cache_path}")
+
+        return embs
+
+    def _cache_path(
+        self, cache_dir: str | None, filename: str, texts: list[str] | None = None
+    ) -> str | None:
+        import os
+
+        if cache_dir:
+            stem, extension = os.path.splitext(filename)
+            if texts is not None:
+                fingerprint = self._texts_fingerprint(texts)
+                filename = f"{stem}-{fingerprint}{extension}"
+            return os.path.join(cache_dir, self._cache_key(), filename)
+        return None
+
+    def index(self, corpus: list[str], cache_dir: str | None = None):
+        path = self._cache_path(cache_dir, "documents.pt", corpus)
+        self.embeddings = self._load_or_encode(
+            corpus, self.model.encode_document, path, "document embeddings"
+        )
+
+    def index_queries(
+        self,
+        queries: list[str],
+        cache_dir: str | None = None,
+        cache_name: str = "queries",
+    ):
+        path = self._cache_path(cache_dir, f"{cache_name}.pt", queries)
+        query_embeddings = self._load_or_encode(
+            queries,
+            self.model.encode_query,
+            path,
+            f"query embeddings ({cache_name})",
+        )
+        self.query_embeddings = query_embeddings
+        self._query_embeddings_by_name[cache_name] = query_embeddings
+
+    def search(self, query_idx: int, cache_name: str | None = None) -> list[int]:
+        if cache_name is None:
+            query_embeddings = self.query_embeddings
+            if query_embeddings is None:
+                raise ValueError(
+                    "No query embeddings loaded. Call index_queries(...) first."
+                )
+        else:
+            if cache_name not in self._query_embeddings_by_name:
+                raise KeyError(f"No query cache named '{cache_name}' is available.")
+            query_embeddings = self._query_embeddings_by_name[cache_name]
+
+        scores = self.util.cos_sim(query_embeddings[query_idx], self.embeddings)[0]
+        return self.torch.argsort(scores, descending=True).tolist()
+
+
+class HarrierRetriever(BaseRetriever):
+    def __init__(
+        self, model_name: str = "microsoft/harrier-oss-v1-27b", batch_size: int = 2
+    ):
+        import torch
+        from sentence_transformers import SentenceTransformer, util
+
+        self.util = util
+        self.torch = torch
+        self.model_name = model_name
+        self.batch_size = batch_size
+        self.query_embeddings = None
+        self._query_embeddings_by_name = {}
+
+        print(f"Loading Dense Retriever ({model_name})...")
+        self.model = SentenceTransformer(
+            model_name, device="cuda", model_kwargs={"dtype": "auto"}
+        )
+
+    def _cache_key(self) -> str:
+        return self.model_name.replace("/", "--")
+
+    @staticmethod
+    def _texts_fingerprint(texts: list[str]) -> str:
+        import hashlib
+
+        digest = hashlib.sha256()
+        for text in texts:
+            encoded = text.encode("utf-8", errors="ignore")
+            digest.update(len(encoded).to_bytes(8, "little", signed=False))
+            digest.update(encoded)
+        return digest.hexdigest()[:16]
+
+    def _cache_path(
+        self, cache_dir: str | None, filename: str, texts: list[str] | None = None
+    ) -> str | None:
+        import os
+
+        if cache_dir:
+            stem, extension = os.path.splitext(filename)
+            if texts is not None:
+                fingerprint = self._texts_fingerprint(texts)
+                filename = f"{stem}-{fingerprint}{extension}"
+            return os.path.join(cache_dir, self._cache_key(), filename)
+        return None
+
+    def _load_or_encode(
+        self, texts: list[str], cache_path: str | None, label: str, **encode_kwargs
+    ):
+        import os
+
+        if cache_path and os.path.exists(cache_path):
+            print(f"[cache hit] Loading {label} from {cache_path}")
+            embs = self.torch.load(cache_path, map_location="cuda", weights_only=True)
+            print(f"Loaded {embs.shape[0]} cached {label}.")
+            return embs
+
+        print(f"Encoding {len(texts)} {label}...")
+        embs = self.model.encode(
+            texts,
+            convert_to_tensor=True,
+            show_progress_bar=True,
+            device="cuda",
+            batch_size=self.batch_size,
+            **encode_kwargs,
+        )
+
+        if cache_path:
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            self.torch.save(embs, cache_path)
+            print(f"[cache miss] Saved {label} to {cache_path}")
+
+        return embs
+
+    def index(self, corpus: list[str], cache_dir: str | None = None):
+        path = self._cache_path(cache_dir, "documents.pt", corpus)
+        self.embeddings = self._load_or_encode(corpus, path, "document embeddings")
+
+    def index_queries(
+        self,
+        queries: list[str],
+        cache_dir: str | None = None,
+        cache_name: str = "queries",
+    ):
+        path = self._cache_path(cache_dir, f"{cache_name}.pt", queries)
+        query_embeddings = self._load_or_encode(
+            queries,
+            path,
+            f"query embeddings ({cache_name})",
+            prompt_name="web_search_query",
+        )
+        self.query_embeddings = query_embeddings
+        self._query_embeddings_by_name[cache_name] = query_embeddings
+
+    def unload_model(self):
+        """Free the embedding model from GPU. Computed embeddings are kept."""
+        import gc
+
+        del self.model
+        gc.collect()
+        self.torch.cuda.empty_cache()
+        print("Embedding model unloaded, GPU memory freed.")
+
+    def search(self, query_idx: int, cache_name: str | None = None) -> list[int]:
+        if cache_name is None:
+            query_embeddings = self.query_embeddings
+            if query_embeddings is None:
+                raise ValueError(
+                    "No query embeddings loaded. Call index_queries(...) first."
+                )
+        else:
+            query_sets = getattr(self, "_query_embeddings_by_name", {})
+            if cache_name not in query_sets:
+                raise KeyError(f"No query cache named '{cache_name}' is available.")
+            query_embeddings = query_sets[cache_name]
+
+        scores = self.util.cos_sim(query_embeddings[query_idx], self.embeddings)[0]
         return self.torch.argsort(scores, descending=True).tolist()
 
 
