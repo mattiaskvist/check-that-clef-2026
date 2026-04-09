@@ -104,7 +104,7 @@ def evaluate_pipeline():
             true_pubkey = row["pubkey"]
 
             # Step A: Independent Retrieval
-            dense_ranks = dense_retriever.search(i)
+            dense_ranks = dense_retriever.search(i, cache_name=f"queries_{lang}")
             sparse_ranks = sparse_retriever.search(query_text)
 
             dense_mrr.append(
