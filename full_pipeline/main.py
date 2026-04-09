@@ -62,7 +62,7 @@ def evaluate_pipeline(
     sparse_retriever = SparseRetriever()
     reranker = NemotronReranker()
     fusion = FusionProcessor()
-    FUSION_TOP_K = 10  # Number of candidates to fuse and rerank
+    FUSION_TOP_K = 30  # Number of candidates to fuse and rerank
     SPARSE_CACHE_TOP_K = (
         2000  # Keep a deep sparse candidate pool for fast rerank/fusion iteration
     )
