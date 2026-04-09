@@ -7,7 +7,7 @@ import spacy
 import country_converter as coco
 from geotext import GeoText
 from rapidfuzz import fuzz
-from tqdm import tqdm
+
 from datasets import load_dataset
 
 # full_pipeline is a sibling package — add the project root to the path
@@ -205,7 +205,10 @@ def _evaluate(tweets: list[dict], collection_dict: dict) -> tuple[dict, int, int
     combined_extracted = 0
     combined_matched   = 0
 
-    for tweet in tqdm(tweets, desc="Evaluating"):
+    n = len(tweets)
+    for i, tweet in enumerate(tweets):
+        if i % 1000 == 0:
+            print(f"Progress: {i}/{n} tweets", flush=True)
         paper = collection_dict.get(tweet["pubkey"])
         if not paper:
             continue

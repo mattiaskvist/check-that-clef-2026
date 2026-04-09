@@ -20,3 +20,10 @@ class BaseReranker(ABC):
     ) -> list[tuple[int, float]]:
         """Return a sorted list of tuples (doc_index, score)."""
         pass
+
+
+class BaseScorer(ABC):
+    @abstractmethod
+    def score(self, query: str, document: str) -> float:
+        """Return a relevance score for a single (query, document) pair."""
+        pass
