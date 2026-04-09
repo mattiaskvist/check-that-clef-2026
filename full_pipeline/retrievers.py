@@ -159,7 +159,7 @@ class HarrierRetriever(BaseRetriever):
 
         print(f"Loading Dense Retriever ({model_name})...")
         self.model = SentenceTransformer(
-            model_name, device="cuda", model_kwargs={"dtype": "auto"}
+            model_name, device="cuda", model_kwargs={"dtype": "auto"}, trust_remote_code=True
         )
 
     def _cache_key(self) -> str:
