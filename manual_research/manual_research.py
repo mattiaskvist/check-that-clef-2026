@@ -11,8 +11,8 @@ from deep_translator import GoogleTranslator
 
 
 # Config
-EXPERIMENT_COUNT = 5
-LANG = "fr"
+EXPERIMENT_COUNT = 8
+LANG = "de"
 PERCENT = 10
 TOP_K = 50
 K_VALUES = [3,5,25,50]
@@ -56,7 +56,7 @@ def build_article(row):
     authors = row["authors"]
     venue = row["venue"]
 
-    return title * 3 + " " + venue * 2 + " " + abstract
+    return title * 3 + abstract + " " + venue * 2 + " " + authors
 
 
 # Load datasets
