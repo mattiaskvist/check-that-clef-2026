@@ -23,6 +23,14 @@ uv run modal secret create hf-token HF_TOKEN=hf_XXXXXXXXXXXXXXXXXXXXXXXXXXXX
 uv run modal run -d -m full_pipeline.main
 ```
 
+Sparse query rankings and scores are cached between runs (under the existing Modal volume mount), so reranking and fusion experiments can iterate without recomputing BM25 for each query.
+
+If you need to rebuild sparse cache artifacts after code changes, run:
+
+```bash
+uv run modal run -d -m full_pipeline.main --force-recompute-sparse-cache
+```
+
 ## Current Stats on Dev
 
 Reported MRR@5 for the full pipeline on the dev set (combining dense retrieval, sparse retrieval, RRF fusion, and final re-ranking) is as follows:

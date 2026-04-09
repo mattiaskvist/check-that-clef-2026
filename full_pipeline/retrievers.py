@@ -257,7 +257,86 @@ class SparseRetriever(BaseRetriever):
 
     def __init__(self):
         self.bm25_model = None
+        self.bm25_k1 = 2.5
+        self.bm25_b = 0.85
         self.stemmer = LancasterStemmer()
+        self._indexed_corpus_fingerprint = None
+        self._query_rankings_by_name = {}
+        self._query_scores_by_name = {}
+
+    def _cache_key(self) -> str:
+        return (
+            f"bm25plus-k1_{self.bm25_k1:.2f}-b_{self.bm25_b:.2f}"
+            "-stem_lancaster-bigrams_1-translate_v1"
+        )
+
+    @staticmethod
+    def _texts_fingerprint(texts: list[str]) -> str:
+        import hashlib
+
+        digest = hashlib.sha256()
+        for text in texts:
+            encoded = text.encode("utf-8", errors="ignore")
+            digest.update(len(encoded).to_bytes(8, "little", signed=False))
+            digest.update(encoded)
+        return digest.hexdigest()[:16]
+
+    def _cache_path(
+        self,
+        cache_dir: str | None,
+        cache_name: str,
+        queries: list[str],
+        lang: str,
+        top_k: int | None,
+    ) -> str | None:
+        import os
+
+        if cache_dir is None:
+            return None
+
+        if self._indexed_corpus_fingerprint is None:
+            raise ValueError("SparseRetriever must be indexed before caching queries.")
+
+        query_fingerprint = self._texts_fingerprint(queries)
+        top_k_label = "all" if top_k is None else str(top_k)
+        filename = (
+            f"{cache_name}-{lang}-top{top_k_label}"
+            f"-{self._indexed_corpus_fingerprint}-{query_fingerprint}.npz"
+        )
+        return os.path.join(cache_dir, "sparse", self._cache_key(), filename)
+
+    def _score_query(
+        self, query: str, lang: str = "auto", top_k: int | None = None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if self.bm25_model is None:
+            raise ValueError("SparseRetriever is not indexed. Call index(...) first.")
+
+        translated_query = self._translate_query(query, lang)
+        tokenized_query = self.tokenize(translated_query)
+        scores = np.asarray(self.bm25_model.get_scores(tokenized_query), dtype=np.float32)
+        ranked_indices = np.argsort(scores)[::-1]
+        if top_k is not None:
+            ranked_indices = ranked_indices[:top_k]
+        ranked_scores = scores[ranked_indices]
+        return ranked_indices.astype(np.int32), ranked_scores.astype(np.float32)
+
+    def _get_cached_query(
+        self, query_idx: int, cache_name: str
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if cache_name not in self._query_rankings_by_name:
+            raise KeyError(f"No sparse query cache named '{cache_name}' is available.")
+
+        rankings = self._query_rankings_by_name[cache_name]
+        scores = self._query_scores_by_name[cache_name]
+
+        if query_idx < 0 or query_idx >= len(rankings):
+            raise IndexError(
+                f"Query index {query_idx} is out of bounds for cache '{cache_name}'."
+            )
+
+        return np.asarray(rankings[query_idx]), np.asarray(
+            scores[query_idx], dtype=np.float32
+        )
 
     def tokenize(self, text: str, add_bigrams: bool = True) -> list[str]:
         """Tokenize text with punctuation, stopword removal, stemming, and optional bigrams."""
@@ -274,7 +353,62 @@ class SparseRetriever(BaseRetriever):
     def index(self, collection: list[dict]):
         corpus = [self.document_to_text(doc) for doc in collection]
         tokenized_corpus = [self.tokenize(text) for text in corpus]
-        self.bm25_model = BM25Plus(tokenized_corpus, k1=2.5, b=0.85)
+        self.bm25_model = BM25Plus(tokenized_corpus, k1=self.bm25_k1, b=self.bm25_b)
+        self._indexed_corpus_fingerprint = self._texts_fingerprint(corpus)
+        self._query_rankings_by_name.clear()
+        self._query_scores_by_name.clear()
+
+    def index_queries(
+        self,
+        queries: list[str],
+        lang: str = "auto",
+        cache_dir: str | None = None,
+        cache_name: str = "queries",
+        top_k: int | None = 2000,
+        force_recompute: bool = False,
+    ):
+        import os
+
+        if self.bm25_model is None:
+            raise ValueError("SparseRetriever is not indexed. Call index(...) first.")
+        if top_k is not None and top_k <= 0:
+            raise ValueError("top_k must be greater than 0 when provided.")
+
+        cache_path = self._cache_path(cache_dir, cache_name, queries, lang, top_k)
+        if cache_path and os.path.exists(cache_path) and not force_recompute:
+            print(
+                f"[cache hit] Loading sparse query cache ({cache_name}) from {cache_path}"
+            )
+            with np.load(cache_path, allow_pickle=False) as cached:
+                rankings = cached["rankings"]
+                scores = cached["scores"]
+            self._query_rankings_by_name[cache_name] = rankings
+            self._query_scores_by_name[cache_name] = scores
+            print(f"Loaded {len(rankings)} cached sparse query results ({cache_name}).")
+            return
+
+        if force_recompute and cache_path and os.path.exists(cache_path):
+            print(f"[cache bypass] Recomputing sparse query cache ({cache_name}).")
+
+        corpus_size = len(getattr(self.bm25_model, "doc_len", []))
+        effective_top_k = corpus_size if top_k is None else min(top_k, corpus_size)
+        rankings = np.empty((len(queries), effective_top_k), dtype=np.int32)
+        scores = np.empty((len(queries), effective_top_k), dtype=np.float32)
+
+        for query_idx, query_text in enumerate(queries):
+            ranked_indices, ranked_scores = self._score_query(
+                query_text, lang=lang, top_k=effective_top_k
+            )
+            rankings[query_idx] = ranked_indices
+            scores[query_idx] = ranked_scores
+
+        self._query_rankings_by_name[cache_name] = rankings
+        self._query_scores_by_name[cache_name] = scores
+
+        if cache_path:
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            np.savez_compressed(cache_path, rankings=rankings, scores=scores)
+            print(f"[cache miss] Saved sparse query cache ({cache_name}) to {cache_path}")
 
     def _translate_query(self, text: str, lang: str = "auto") -> str:
         """Helper function to translate non-English queries to English.
@@ -326,12 +460,32 @@ class SparseRetriever(BaseRetriever):
         except (TranslationNotFound, NotValidPayload, NotValidLength, RequestError):
             return normalized_text or text
 
-    def search(self, query: str, lang: str = "auto") -> list[int]:
-        """Translates the query if necessary, then performs BM25 search."""
-        translated_query = self._translate_query(query, lang)
-        tokenized_query = self.tokenize(translated_query)
-        scores = self.bm25_model.get_scores(tokenized_query)
-        return np.argsort(scores)[::-1].tolist()
+    def search_with_scores(
+        self,
+        query: str | int,
+        lang: str = "auto",
+        cache_name: str | None = None,
+    ) -> tuple[list[int], list[float]]:
+        if cache_name is not None:
+            if not isinstance(query, int):
+                raise TypeError("Cached sparse lookup requires query index (int).")
+            ranked_indices, ranked_scores = self._get_cached_query(query, cache_name)
+            return ranked_indices.tolist(), ranked_scores.tolist()
+
+        if not isinstance(query, str):
+            raise TypeError("Query must be a string when cache_name is not provided.")
+
+        ranked_indices, ranked_scores = self._score_query(query, lang=lang, top_k=None)
+        return ranked_indices.tolist(), ranked_scores.tolist()
+
+    def search(
+        self, query: str | int, lang: str = "auto", cache_name: str | None = None
+    ) -> list[int]:
+        """Return sparse-ranked document ids for a query text or cached query index."""
+        ranked_indices, _ = self.search_with_scores(
+            query, lang=lang, cache_name=cache_name
+        )
+        return ranked_indices
 
     def document_to_text(self, doc: dict) -> str:
         """Turn the article dict into a single string for indexing and retrieval.

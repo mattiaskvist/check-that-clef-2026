@@ -45,11 +45,11 @@ CACHE_MOUNT = "/cache/embeddings"
 @app.function(
     image=image,
     gpu="A100-80GB",
-    timeout=60 * 60 * 2,
+    timeout=60 * 60 * 3,
     secrets=[modal.Secret.from_name("hf-token")],
     volumes={CACHE_MOUNT: embedding_cache},
 )
-def evaluate_pipeline():
+def evaluate_pipeline(force_recompute_sparse_cache: bool = False):
     from datasets import load_dataset
     from tqdm import tqdm
 
@@ -59,6 +59,9 @@ def evaluate_pipeline():
     reranker = NemotronReranker()
     fusion = FusionProcessor()
     FUSION_TOP_K = 30  # Number of candidates to fuse and rerank
+    SPARSE_CACHE_TOP_K = (
+        2000  # Keep a deep sparse candidate pool for fast rerank/fusion iteration
+    )
 
     # --- LOAD & INDEX COLLECTION ---
     collection_dataset = load_dataset(
@@ -80,6 +83,14 @@ def evaluate_pipeline():
         query_texts = [row["text"] for row in tweets]
         dense_retriever.index_queries(
             query_texts, cache_dir=CACHE_MOUNT, cache_name=f"queries_{lang}"
+        )
+        sparse_retriever.index_queries(
+            query_texts,
+            lang=lang,
+            cache_dir=CACHE_MOUNT,
+            cache_name=f"sparse_queries_{lang}",
+            top_k=SPARSE_CACHE_TOP_K,
+            force_recompute=force_recompute_sparse_cache,
         )
         embedding_cache.commit()
 
@@ -120,7 +131,9 @@ def evaluate_pipeline():
 
             # Step A: Independent Retrieval
             dense_ranks = dense_retriever.search(i, cache_name=f"queries_{lang}")
-            sparse_ranks = sparse_retriever.search(query_text)
+            sparse_ranks = sparse_retriever.search(
+                i, cache_name=f"sparse_queries_{lang}"
+            )
 
             dense_preds = [article_pubkeys[doc_id] for doc_id in dense_ranks]
             sparse_preds = [article_pubkeys[doc_id] for doc_id in sparse_ranks]
@@ -251,5 +264,5 @@ def evaluate_pipeline():
 
 
 @app.local_entrypoint()
-def main():
-    evaluate_pipeline.remote()
+def main(force_recompute_sparse_cache: bool = False):
+    evaluate_pipeline.remote(force_recompute_sparse_cache=force_recompute_sparse_cache)
