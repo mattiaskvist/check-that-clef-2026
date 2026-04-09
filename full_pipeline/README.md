@@ -27,29 +27,12 @@ uv run modal run -d -m full_pipeline.main
 
 Reported MRR@5 for the full pipeline on the dev set (combining dense retrieval, sparse retrieval, RRF fusion, and final re-ranking) is as follows:
 
-[DE] - 386 Queries Evaluated
-  ├─ Dense Only:    0.4945
-  ├─ Sparse Only:   0.2138
-  ├─ RRF Output:    0.3692
-  └─ Final Rerank:  0.5186
-
-[FR] - 702 Queries Evaluated
-  ├─ Dense Only:    0.5704
-  ├─ Sparse Only:   0.2709
-  ├─ RRF Output:    0.4825
-  └─ Final Rerank:  0.6082
-
-[EN] - 3905 Queries Evaluated
-  ├─ Dense Only:    0.5600
-  ├─ Sparse Only:   0.5468
-  ├─ RRF Output:    0.5955
-  └─ Final Rerank:  0.6360
-
-[GLOBAL AVERAGE] - 4993 Total Queries Across All Languages
-  ├─ Overall Dense:    0.5564
-  ├─ Overall Sparse:   0.4823
-  ├─ Overall RRF:      0.5621
-  └─ Overall Final:    0.6230
+| Language / Group | n Tweets | Dense  | Sparse | RRF    | Rerank |
+|------------------|----------|--------|--------|--------|--------|
+| DE               | 386      | 0.4945 | 0.4047 | 0.5216 | 0.5459 |
+| FR               | 702      | 0.5704 | 0.5446 | 0.6194 | 0.6557 |
+| EN               | 3905     | 0.5600 | 0.5350 | 0.5937 | 0.6277 |
+| GLOBAL AVERAGE   | 4993     | 0.5564 | 0.5263 | 0.5918 | 0.6253 |
 
 Note: These numbers will need to be updated as we continue to refine the pipeline. The current results are based on the dev set, which we are treating as a validation set for iterative improvements.
 

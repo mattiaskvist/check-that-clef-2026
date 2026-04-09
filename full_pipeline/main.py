@@ -21,6 +21,7 @@ image = (
         "nltk",
         "Pillow",
         "torchvision",
+        "deep-translator",
     )
 )
 
