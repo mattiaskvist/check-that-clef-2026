@@ -34,7 +34,6 @@ class ScoreFusionProcessor:
         "sparse_rank",
         "rrf_score",
         "rrf_rank",
-        #"hard_indicator_score",
     ]
 
     def __init__(self, lgb_params: dict | None = None):
@@ -43,8 +42,8 @@ class ScoreFusionProcessor:
             "objective": "lambdarank",
             "metric": "ndcg",
             "learning_rate": 0.1,
-            "n_estimators": 200,
-            "num_leaves": 31,
+            "n_estimators": 100,
+            "num_leaves": 15,
             "min_data_in_leaf": 10,
         }
 
@@ -57,7 +56,6 @@ class ScoreFusionProcessor:
         sparse_ranked: list[int],
         rrf_scores: dict[int, float],
         rrf_ranked: list[int],
-        #hard_indicator_scores: dict[int, float],
     ) -> list[list[float]]:
         """Build feature vectors for all candidates of a single query.
 
@@ -69,7 +67,6 @@ class ScoreFusionProcessor:
             sparse_ranked: full list of doc IDs sorted by BM25 score descending.
             rrf_scores: dict {doc_id: rrf_score} for the top-k candidates.
             rrf_ranked: list of doc IDs sorted by RRF score descending.
-            hard_indicator_scores: dict {doc_id: float} of extracted feature scores.
 
         Returns:
             list of feature vectors, one per candidate, in the same order as
@@ -104,7 +101,6 @@ class ScoreFusionProcessor:
                 float(sparse_rank_lookup.get(doc_id, max_rank)),
                 float(rrf_scores.get(doc_id, 0.0)),
                 float(rrf_rank_lookup.get(doc_id, len(rrf_ranked))),
-                #float(hard_indicator_scores.get(doc_id, 0.0)),
             ]
             features.append(feat)
 

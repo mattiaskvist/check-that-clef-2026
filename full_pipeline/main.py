@@ -1,7 +1,7 @@
 import modal
 
 from .rerankers import NemotronReranker, Gemma2BReranker
-from .retrievers import HarrierRetriever, SparseRetriever, BGEM3Retriever, HardIndicatorRetriever
+from .retrievers import HarrierRetriever, SparseRetriever, BGEM3Retriever
 from .utils import CHECKTHAT_DATASET, FusionProcessor, MRR_at_5, article_to_text
 from .fusions import ScoreFusionProcessor
 
@@ -30,7 +30,7 @@ image = (
         "rapidfuzz",
         "spacy"
     )
-    .run_commands("python -m spacy download en_core_web_sm")
+
 )
 
 app = modal.App("checkthat-evaluation-pipeline")
@@ -59,10 +59,8 @@ def evaluate_pipeline():
     # --- INITIALIZE COMPONENTS ---
     dense_retriever = HarrierRetriever()
     sparse_retriever = SparseRetriever()
-    #indicator_retriever = HardIndicatorRetriever()
     reranker = Gemma2BReranker()
     fusion = FusionProcessor()
-    score_fusion = ScoreFusionProcessor()
 
     # --- LOAD & INDEX COLLECTION ---
     collection_dataset = load_dataset(
@@ -82,7 +80,7 @@ def evaluate_pipeline():
         tweets = list(load_dataset(CHECKTHAT_DATASET, lang)["dev"])
         
         # Split into train/test per language
-        train_idx, test_idx = train_test_split(list(range(len(tweets))), test_size=0.2, random_state=42)
+        train_idx, test_idx = train_test_split(list(range(len(tweets))), test_size=0.5, random_state=42)
         lang_tweets[lang] = {
             "tweets": tweets,
             "train_idx": train_idx,
@@ -97,17 +95,17 @@ def evaluate_pipeline():
 
     dense_retriever.unload_model()
 
-    # Indicator Retreiver pre-initialized as indicator_retriever
-
     # --- 4. TRAIN LIGHTGBM ---
     print("\n" + "=" * 50)
-    print("  TRAINING LIGHTGBM SCORE FUSION (80% Data)")
+    print("  TRAINING LIGHTGBM SCORE FUSION (50% Data Per Language)")
     print("=" * 50)
 
-    X_train_list, y_train_list, group_train_list = [], [], []
+    score_fusions = {}
 
     for lang in languages:
+        X_train_list, y_train_list, group_train_list = [], [], []
         tweets = lang_tweets[lang]["tweets"]
+        
         for i in tqdm(lang_tweets[lang]["train_idx"], desc=f"Training features for {lang.upper()}"):
             query_text = tweets[i]["text"]
             true_pubkey = tweets[i]["pubkey"]
@@ -120,9 +118,6 @@ def evaluate_pipeline():
 
             rrf_ranks, rrf_scores = fusion.reciprocal_rank_fusion([dense_ranks, sparse_ranks], top_k=len(union_candidates))
             
-            # Hard Indicator features
-            #indicator_scores = indicator_retriever.score_candidates(query_text, union_candidates, article_texts)
-
             features = ScoreFusionProcessor.build_query_features(
                 candidates=union_candidates,
                 dense_scores=dense_scores,
@@ -131,7 +126,6 @@ def evaluate_pipeline():
                 sparse_ranked=sparse_ranks,
                 rrf_scores=rrf_scores,
                 rrf_ranked=rrf_ranks,
-                #hard_indicator_scores=indicator_scores,
             )
 
             labels = [1 if article_pubkeys[doc_id] == true_pubkey else 0 for doc_id in union_candidates]
@@ -140,17 +134,19 @@ def evaluate_pipeline():
             y_train_list.extend(labels)
             group_train_list.append(len(union_candidates))
 
-    X_train = np.array(X_train_list, dtype=np.float32)
-    y_train = np.array(y_train_list, dtype=np.float32)
-    group_train = np.array(group_train_list, dtype=np.int32)
-    
-    print(f"\nTraining set: {len(X_train)} samples")
-    print(f"  Positive samples: {int(y_train.sum())} ({y_train.mean() * 100:.1f}%)")
-    score_fusion.train(X_train, y_train, group=group_train)
+        X_train = np.array(X_train_list, dtype=np.float32)
+        y_train = np.array(y_train_list, dtype=np.float32)
+        group_train = np.array(group_train_list, dtype=np.int32)
+        
+        print(f"\n[{lang.upper()}] Training set: {len(X_train)} samples")
+        print(f"  Positive samples: {int(y_train.sum())} ({y_train.mean() * 100:.1f}%)")
+        
+        score_fusions[lang] = ScoreFusionProcessor()
+        score_fusions[lang].train(X_train, y_train, group=group_train)
 
-    # --- 5. TEST PIPELINE (20% Data) ---
+    # --- 5. TEST PIPELINE (50% Data) ---
     print("\n" + "=" * 50)
-    print("  TESTING PIPELINE (20% Held-Out)")
+    print("  TESTING PIPELINE (50% Held-Out)")
     print("=" * 50)
 
     test_metrics = {lang: {"dense": [], "sparse": [], "rrf": [], "lgb": [], "old_final": [], "new_final": []} for lang in languages}
@@ -178,8 +174,6 @@ def evaluate_pipeline():
             union_candidates = list(dict.fromkeys(dense_ranks[:100] + sparse_ranks[:100]))
             rrf_ranks, rrf_scores = fusion.reciprocal_rank_fusion([dense_ranks, sparse_ranks], top_k=len(union_candidates))
             
-            #indicator_scores = indicator_retriever.score_candidates(query_text, union_candidates, article_texts)
-
             features = ScoreFusionProcessor.build_query_features(
                 candidates=union_candidates,
                 dense_scores=dense_scores,
@@ -188,10 +182,9 @@ def evaluate_pipeline():
                 sparse_ranked=sparse_ranks,
                 rrf_scores=rrf_scores,
                 rrf_ranked=rrf_ranks,
-                #hard_indicator_scores=indicator_scores,
             )
 
-            lgb_results = score_fusion.predict_and_rerank(union_candidates, features)
+            lgb_results = score_fusions[lang].predict_and_rerank(union_candidates, features)
             lgb_top10 = [doc_id for doc_id, score in lgb_results[:10]]
             test_metrics[lang]["lgb"].append(MRR_at_5([article_pubkeys[idx] for idx in lgb_top10], true_pubkey))
 
