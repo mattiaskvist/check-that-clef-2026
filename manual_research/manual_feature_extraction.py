@@ -1,5 +1,6 @@
 import re
 import sys
+import time
 import random
 import logging
 from pathlib import Path
@@ -9,7 +10,6 @@ from datasets import load_dataset
 
 # full_pipeline is a sibling package — add the project root to the path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from full_pipeline.interfaces import BaseScorer
 
 logging.getLogger("country_converter").setLevel(logging.ERROR)
 
@@ -158,7 +158,7 @@ def _paper_text(paper: dict) -> str:
 # SCORER (pipeline-compatible)
 # ==========================================
 
-class HardIndicatorScorer(BaseScorer):
+class HardIndicatorScorer():
     """Scores a (query, document) pair based on hard indicators extracted from the query.
 
     For each entity extracted from the query:
@@ -196,6 +196,7 @@ def _evaluate(tweets: list[dict], collection_dict: dict) -> dict:
 
     Returns a detailed results dict with per-extractor and combined data.
     """
+    start_time = time.time()
     # Build list of all paper keys for false positive sampling
     all_pubkeys = list(collection_dict.keys())
 
@@ -301,6 +302,7 @@ def _evaluate(tweets: list[dict], collection_dict: dict) -> dict:
         "types_extracted_per_tweet": types_extracted_per_tweet,
         "types_matched_per_tweet": types_matched_per_tweet,
         "n_tweets": n,
+        "execution_time_seconds": time.time() - start_time,
     }
 
 
@@ -318,7 +320,7 @@ def _print_results(results: dict):
     # ──────────────────────────────────────
     col = 14
     print(f"\n{'='*100}")
-    print("  HARD INDICATOR EXTRACTION — SUMMARY TABLE")
+    print(f"  HARD INDICATOR EXTRACTION — SUMMARY TABLE  (Processed {n_tweets} tweets in {results.get('execution_time_seconds', 0):.2f}s => {n_tweets/max(results.get('execution_time_seconds', 1), 0.001):.1f} queries/s)")
     print(f"{'='*100}")
     print(f"\n{'Extractor':<{col}} {'Extracted':>10} {'TP (correct)':>13} {'Precision':>10} {'Recall':>8} {'FP rate':>10} {'Selectivity':>12}")
     print("-" * 81)
@@ -473,7 +475,47 @@ def _print_results(results: dict):
     print(f"METRIC: {metric_value:.6f}")
 
 
+def _log_to_tsv(results: dict, filename: str = "benchmark_results.tsv", description: str = "Baseline"):
+    import csv
+    import os
+    from datetime import datetime
+
+    n_tweets = results["n_tweets"]
+    exec_time = results.get("execution_time_seconds", 0)
+    qps = n_tweets / max(exec_time, 0.001)
+
+    combined_extracted = results["combined_extracted"]
+    combined_matched = results["combined_matched"]
+    combined_fp = results["combined_fp"]
+
+    precision = (combined_matched / combined_extracted * 100) if combined_extracted > 0 else 0
+    recall = (combined_matched / n_tweets * 100)
+    fp_rate = (combined_fp / combined_extracted * 100) if combined_extracted > 0 else 0
+
+    file_exists = os.path.isfile(filename)
+
+    with open(filename, mode="a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f, delimiter="\t")
+        if not file_exists:
+            writer.writerow(["Timestamp", "Description", "Exec Time (s)", "Queries/s", "Precision (%)", "Recall (%)", "FP Rate (%)"])
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        writer.writerow([
+            timestamp,
+            description,
+            f"{exec_time:.2f}",
+            f"{qps:.1f}",
+            f"{precision:.2f}",
+            f"{recall:.2f}",
+            f"{fp_rate:.2f}"
+        ])
+    print(f"\n=> Appended benchmark metrics to {filename}")
+
+
 def main():
+    import sys
+    desc = sys.argv[1] if len(sys.argv) > 1 else "Baseline"
+    
     random.seed(42)  # reproducible false positive sampling
     print("Loading datasets...")
     collection_raw = load_dataset(
@@ -488,7 +530,7 @@ def main():
 
     results = _evaluate(tweets, collection_dict)
     _print_results(results)
-
+    _log_to_tsv(results, description=desc)
 
 if __name__ == "__main__":
     main()

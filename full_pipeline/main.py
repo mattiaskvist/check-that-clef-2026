@@ -1,7 +1,7 @@
 import modal
 
 from .rerankers import NemotronReranker, Gemma2BReranker
-from .retrievers import HarrierRetriever, SparseRetriever, BGEM3Retriever
+from .retrievers import HarrierRetriever, SparseRetriever, BGEM3Retriever, HardIndicatorRetriever
 from .utils import CHECKTHAT_DATASET, FusionProcessor, MRR_at_5, article_to_text
 from .fusions import ScoreFusionProcessor
 
@@ -25,7 +25,12 @@ image = (
         "deep-translator",
         "lightgbm",
         "scikit-learn",
+        "country_converter",
+        "geotext",
+        "rapidfuzz",
+        "spacy"
     )
+    .run_commands("python -m spacy download en_core_web_sm")
 )
 
 app = modal.App("checkthat-evaluation-pipeline")
@@ -34,7 +39,6 @@ embedding_cache = modal.Volume.from_name(
 )
 
 CACHE_MOUNT = "/cache/embeddings"
-
 
 # ==========================================
 # 2. MAIN CLOUD FUNCTION
@@ -55,6 +59,7 @@ def evaluate_pipeline():
     # --- INITIALIZE COMPONENTS ---
     dense_retriever = HarrierRetriever()
     sparse_retriever = SparseRetriever()
+    #indicator_retriever = HardIndicatorRetriever()
     reranker = Gemma2BReranker()
     fusion = FusionProcessor()
     score_fusion = ScoreFusionProcessor()
@@ -75,7 +80,15 @@ def evaluate_pipeline():
     lang_tweets = {}
     for lang in languages:
         tweets = list(load_dataset(CHECKTHAT_DATASET, lang)["dev"])
-        lang_tweets[lang] = tweets
+        
+        # Split into train/test per language
+        train_idx, test_idx = train_test_split(list(range(len(tweets))), test_size=0.2, random_state=42)
+        lang_tweets[lang] = {
+            "tweets": tweets,
+            "train_idx": train_idx,
+            "test_idx": test_idx
+        }
+        
         query_texts = [row["text"] for row in tweets]
         dense_retriever.index_queries(
             query_texts, cache_dir=CACHE_MOUNT, cache_name=f"queries_{lang}"
@@ -84,270 +97,136 @@ def evaluate_pipeline():
 
     dense_retriever.unload_model()
 
-    # --- 4. EVALUATION LOOP (collect scores for all systems) ---
-    global_results = {}
-    global_totals = {
-        "queries": 0,
-        "dense_sum": 0.0,
-        "sparse_sum": 0.0,
-        "rrf_sum": 0.0,
-        "final_sum": 0.0,
-    }
+    # Indicator Retreiver pre-initialized as indicator_retriever
 
-    # Storage for LightGBM data collection
-    all_lgb_data = []  # list of dicts per query
+    # --- 4. TRAIN LIGHTGBM ---
+    print("\n" + "=" * 50)
+    print("  TRAINING LIGHTGBM SCORE FUSION (80% Data)")
+    print("=" * 50)
+
+    X_train_list, y_train_list, group_train_list = [], [], []
 
     for lang in languages:
-        print("\n==========================================")
-        print(f"  STARTING EVALUATION FOR LANGUAGE: {lang.upper()}")
-        print("==========================================")
+        tweets = lang_tweets[lang]["tweets"]
+        for i in tqdm(lang_tweets[lang]["train_idx"], desc=f"Training features for {lang.upper()}"):
+            query_text = tweets[i]["text"]
+            true_pubkey = tweets[i]["pubkey"]
 
-        tweets = lang_tweets[lang]
-
-        dense_mrr, sparse_mrr, rrf_mrr, final_mrr = [], [], [], []
-
-        for i, row in enumerate(
-            tqdm(tweets, desc=f"Evaluating {lang.upper()} Queries")
-        ):
-            query_text = row["text"]
-            true_pubkey = row["pubkey"]
-
-            # Step A: Independent Retrieval (now returns scores too)
-            dense_ranks, dense_scores = dense_retriever.search(
-                i, cache_name=f"queries_{lang}"
-            )
+            dense_ranks, dense_scores = dense_retriever.search(i, cache_name=f"queries_{lang}")
             sparse_ranks, sparse_scores = sparse_retriever.search(query_text)
 
-            dense_mrr.append(
-                MRR_at_5(
-                    [article_pubkeys[doc_id] for doc_id in dense_ranks], true_pubkey
-                )
-            )
-            sparse_mrr.append(
-                MRR_at_5(
-                    [article_pubkeys[doc_id] for doc_id in sparse_ranks], true_pubkey
-                )
-            )
+            # Candidate Union (top 100 dense + top 100 sparse)
+            union_candidates = list(dict.fromkeys(dense_ranks[:100] + sparse_ranks[:100]))
 
-            # Step B: Fusion (now returns scores too)
-            fused_candidates, rrf_scores = fusion.reciprocal_rank_fusion(
-                [dense_ranks, sparse_ranks], top_k=10
-            )
-            rrf_mrr.append(
-                MRR_at_5(
-                    [article_pubkeys[doc_id] for doc_id in fused_candidates],
-                    true_pubkey,
-                )
-            )
+            rrf_ranks, rrf_scores = fusion.reciprocal_rank_fusion([dense_ranks, sparse_ranks], top_k=len(union_candidates))
+            
+            # Hard Indicator features
+            #indicator_scores = indicator_retriever.score_candidates(query_text, union_candidates, article_texts)
 
-            # Step C: Reranking
-            final_results = reranker.rerank(query_text, fused_candidates, article_texts)
-            final_mrr.append(
-                MRR_at_5(
-                    [article_pubkeys[doc_id] for doc_id, score in final_results],
-                    true_pubkey,
-                )
-            )
-
-            # Step D: Collect features for LightGBM
             features = ScoreFusionProcessor.build_query_features(
-                candidates=fused_candidates,
+                candidates=union_candidates,
                 dense_scores=dense_scores,
                 dense_ranked=dense_ranks,
                 sparse_scores=sparse_scores,
                 sparse_ranked=sparse_ranks,
                 rrf_scores=rrf_scores,
-                rrf_ranked=fused_candidates,
-                reranker_results=final_results,
+                rrf_ranked=rrf_ranks,
+                #hard_indicator_scores=indicator_scores,
             )
 
-            # Labels: 1 if candidate is the correct paper, else 0
-            labels = [
-                1 if article_pubkeys[doc_id] == true_pubkey else 0
-                for doc_id in fused_candidates
-            ]
-
-            all_lgb_data.append(
-                {
-                    "lang": lang,
-                    "query_idx": i,
-                    "true_pubkey": true_pubkey,
-                    "candidates": fused_candidates,
-                    "candidate_pubkeys": [
-                        article_pubkeys[doc_id] for doc_id in fused_candidates
-                    ],
-                    "features": features,
-                    "labels": labels,
-                    # Store per-system MRRs for this query for test-split comparison
-                    "dense_mrr": dense_mrr[-1],
-                    "sparse_mrr": sparse_mrr[-1],
-                    "rrf_mrr": rrf_mrr[-1],
-                    "rerank_mrr": final_mrr[-1],
-                }
-            )
-
-        # Track and print metrics (UNCHANGED from original)
-        avg_dense = sum(dense_mrr) / len(dense_mrr)
-        avg_sparse = sum(sparse_mrr) / len(sparse_mrr)
-        avg_rrf = sum(rrf_mrr) / len(rrf_mrr)
-        avg_final = sum(final_mrr) / len(final_mrr)
-
-        global_totals["queries"] += len(tweets)
-        global_totals["dense_sum"] += sum(dense_mrr)
-        global_totals["sparse_sum"] += sum(sparse_mrr)
-        global_totals["rrf_sum"] += sum(rrf_mrr)
-        global_totals["final_sum"] += sum(final_mrr)
-
-        global_results[lang] = {
-            "Total Queries": len(tweets),
-            "Dense MRR@5": avg_dense,
-            "Sparse MRR@5": avg_sparse,
-            "RRF MRR@5": avg_rrf,
-            "Final MRR@5": avg_final,
-        }
-
-        print(f"\n--- Summary for {lang.upper()} ---")
-        print(f"Total Queries:      {len(tweets)}\nDense MRR@5:        {avg_dense:.4f}")
-        print(
-            f"Sparse MRR@5:       {avg_sparse:.4f}\nRRF MRR@5:          {avg_rrf:.4f}\nFinal Pipeline:     {avg_final:.4f}"
-        )
-
-    # --- 4. PRINT BIG SUMMARY (UNCHANGED from original) ---
-    print("\n\n" + "*" * 50)
-    print("*" + " FINAL MULTILINGUAL EVALUATION SUMMARY ".center(48) + "*")
-    print("*" * 50)
-
-    for lang, metrics in global_results.items():
-        print(f"\n[{lang.upper()}] - {metrics['Total Queries']} Queries Evaluated")
-        print(
-            f"  ├─ Dense Only:    {metrics['Dense MRR@5']:.4f}\n  ├─ Sparse Only:   {metrics['Sparse MRR@5']:.4f}"
-        )
-        print(
-            f"  ├─ RRF Output:    {metrics['RRF MRR@5']:.4f}\n  └─ Final Rerank:  {metrics['Final MRR@5']:.4f}"
-        )
-
-    total_q = global_totals["queries"]
-    print("\n==================================================")
-    print(f"[GLOBAL AVERAGE] - {total_q} Total Queries Across All Languages")
-    print(f"  ├─ Overall Dense:    {(global_totals['dense_sum'] / total_q):.4f}")
-    print(f"  ├─ Overall Sparse:   {(global_totals['sparse_sum'] / total_q):.4f}")
-    print(f"  ├─ Overall RRF:      {(global_totals['rrf_sum'] / total_q):.4f}")
-    print(f"  └─ Overall Final:    {(global_totals['final_sum'] / total_q):.4f}")
-    print("==================================================\n")
-
-    # ==========================================
-    # 5. LIGHTGBM FUSION: TRAIN & EVALUATE
-    # ==========================================
-    print("\n" + "=" * 50)
-    print("  LIGHTGBM SCORE FUSION — TRAINING & EVALUATION")
-    print("=" * 50)
-
-    # Split at query level (80% train, 20% test)
-    query_indices = list(range(len(all_lgb_data)))
-    train_indices, test_indices = train_test_split(
-        query_indices, test_size=0.2, random_state=42
-    )
-
-    # Build training data
-    X_train_list, y_train_list, group_train_list = [], [], []
-    for idx in train_indices:
-        entry = all_lgb_data[idx]
-        X_train_list.extend(entry["features"])
-        y_train_list.extend(entry["labels"])
-        group_train_list.append(len(entry["candidates"]))
+            labels = [1 if article_pubkeys[doc_id] == true_pubkey else 0 for doc_id in union_candidates]
+            
+            X_train_list.extend(features)
+            y_train_list.extend(labels)
+            group_train_list.append(len(union_candidates))
 
     X_train = np.array(X_train_list, dtype=np.float32)
     y_train = np.array(y_train_list, dtype=np.float32)
     group_train = np.array(group_train_list, dtype=np.int32)
-
-    print(f"\nTraining set: {len(train_indices)} queries, {len(X_train)} samples")
-    print(
-        f"  Positive samples: {int(y_train.sum())} ({y_train.mean() * 100:.1f}%)"
-    )
-    print(f"Test set:     {len(test_indices)} queries")
-
-    # Train the model
+    
+    print(f"\nTraining set: {len(X_train)} samples")
+    print(f"  Positive samples: {int(y_train.sum())} ({y_train.mean() * 100:.1f}%)")
     score_fusion.train(X_train, y_train, group=group_train)
 
-    # ==========================================
-    # 6. EVALUATE LIGHTGBM ON TEST SPLIT
-    # ==========================================
-    print("\n" + "-" * 50)
-    print("  LIGHTGBM LAMBDAMART TEST SET EVALUATION (20% Held-Out)")
-    print("-" * 50)
+    # --- 5. TEST PIPELINE (20% Data) ---
+    print("\n" + "=" * 50)
+    print("  TESTING PIPELINE (20% Held-Out)")
+    print("=" * 50)
 
-    # Per-language tracking for fair comparison on the test split
-    test_metrics = {
-        lang: {
-            "dense_mrrs": [],
-            "sparse_mrrs": [],
-            "rrf_mrrs": [],
-            "rerank_mrrs": [],
-            "lgb_mrrs": [],
-        }
-        for lang in languages
-    }
+    test_metrics = {lang: {"dense": [], "sparse": [], "rrf": [], "lgb": [], "old_final": [], "new_final": []} for lang in languages}
 
-    for idx in test_indices:
-        entry = all_lgb_data[idx]
-        lang = entry["lang"]
-        true_pubkey = entry["true_pubkey"]
+    for lang in languages:
+        tweets = lang_tweets[lang]["tweets"]
+        for i in tqdm(lang_tweets[lang]["test_idx"], desc=f"Testing {lang.upper()}"):
+            query_text = tweets[i]["text"]
+            true_pubkey = tweets[i]["pubkey"]
 
-        # LightGBM prediction and reranking
-        lgb_results = score_fusion.predict_and_rerank(
-            entry["candidates"], entry["features"]
-        )
-        # Build doc_id → pubkey lookup for this query's candidates
-        docid_to_pubkey = dict(
-            zip(entry["candidates"], entry["candidate_pubkeys"])
-        )
-        lgb_preds = [docid_to_pubkey[doc_id] for doc_id, _ in lgb_results]
-        lgb_mrr = MRR_at_5(lgb_preds, true_pubkey)
+            dense_ranks, dense_scores = dense_retriever.search(i, cache_name=f"queries_{lang}")
+            sparse_ranks, sparse_scores = sparse_retriever.search(query_text)
 
-        test_metrics[lang]["dense_mrrs"].append(entry["dense_mrr"])
-        test_metrics[lang]["sparse_mrrs"].append(entry["sparse_mrr"])
-        test_metrics[lang]["rrf_mrrs"].append(entry["rrf_mrr"])
-        test_metrics[lang]["rerank_mrrs"].append(entry["rerank_mrr"])
-        test_metrics[lang]["lgb_mrrs"].append(lgb_mrr)
+            test_metrics[lang]["dense"].append(MRR_at_5([article_pubkeys[idx] for idx in dense_ranks], true_pubkey))
+            test_metrics[lang]["sparse"].append(MRR_at_5([article_pubkeys[idx] for idx in sparse_ranks], true_pubkey))
 
-    # Compute and print test-split comparison
-    all_dense, all_sparse, all_rrf, all_rerank, all_lgb = [], [], [], [], []
+            # Old Pipeline: RRF Top 10 -> Reranker
+            old_fused, old_rrf_scores = fusion.reciprocal_rank_fusion([dense_ranks, sparse_ranks], top_k=10)
+            test_metrics[lang]["rrf"].append(MRR_at_5([article_pubkeys[idx] for idx in old_fused], true_pubkey))
+            
+            old_reranked = reranker.rerank(query_text, old_fused, article_texts)
+            test_metrics[lang]["old_final"].append(MRR_at_5([article_pubkeys[idx] for idx, score in old_reranked], true_pubkey))
+
+            # New Pipeline: Union 100 -> LGB(Features) -> Top 10 -> Reranker
+            union_candidates = list(dict.fromkeys(dense_ranks[:100] + sparse_ranks[:100]))
+            rrf_ranks, rrf_scores = fusion.reciprocal_rank_fusion([dense_ranks, sparse_ranks], top_k=len(union_candidates))
+            
+            #indicator_scores = indicator_retriever.score_candidates(query_text, union_candidates, article_texts)
+
+            features = ScoreFusionProcessor.build_query_features(
+                candidates=union_candidates,
+                dense_scores=dense_scores,
+                dense_ranked=dense_ranks,
+                sparse_scores=sparse_scores,
+                sparse_ranked=sparse_ranks,
+                rrf_scores=rrf_scores,
+                rrf_ranked=rrf_ranks,
+                #hard_indicator_scores=indicator_scores,
+            )
+
+            lgb_results = score_fusion.predict_and_rerank(union_candidates, features)
+            lgb_top10 = [doc_id for doc_id, score in lgb_results[:10]]
+            test_metrics[lang]["lgb"].append(MRR_at_5([article_pubkeys[idx] for idx in lgb_top10], true_pubkey))
+
+            new_reranked = reranker.rerank(query_text, lgb_top10, article_texts)
+            test_metrics[lang]["new_final"].append(MRR_at_5([article_pubkeys[idx] for idx, score in new_reranked], true_pubkey))
+
+    # Calculate global testing metrics
+    print("\n\n" + "*" * 50)
+    print("*" + " FINAL MULTILINGUAL TEST SUMMARY ".center(48) + "*")
+    print("*" * 50)
+
+    global_test = {k: 0.0 for k in test_metrics["en"].keys()}
+    total_q = 0
 
     for lang in languages:
         m = test_metrics[lang]
-        n = len(m["lgb_mrrs"])
-        if n == 0:
-            continue
+        n_q = len(m["dense"])
+        if n_q == 0: continue
+        total_q += n_q
+        print(f"\n[{lang.upper()}] - {n_q} Queries")
+        print(f"  ├─ Dense Only:        {sum(m['dense'])/n_q:.4f}")
+        print(f"  ├─ Sparse Only:       {sum(m['sparse'])/n_q:.4f}")
+        print(f"  ├─ Old Fusion (RRF):  {sum(m['rrf'])/n_q:.4f}")
+        print(f"  ├─ New Fusion (LGB):  {sum(m['lgb'])/n_q:.4f}")
+        print(f"  ├─ Old Pipeline Flow: {sum(m['old_final'])/n_q:.4f}  (RRF -> Neural)")
+        print(f"  └─ New Pipeline Flow: {sum(m['new_final'])/n_q:.4f}  (LGB -> Neural)")
 
-        avg_d = sum(m["dense_mrrs"]) / n
-        avg_s = sum(m["sparse_mrrs"]) / n
-        avg_r = sum(m["rrf_mrrs"]) / n
-        avg_re = sum(m["rerank_mrrs"]) / n
-        avg_x = sum(m["lgb_mrrs"]) / n
+        for k in global_test.keys():
+            global_test[k] += sum(m[k])
 
-        all_dense.extend(m["dense_mrrs"])
-        all_sparse.extend(m["sparse_mrrs"])
-        all_rrf.extend(m["rrf_mrrs"])
-        all_rerank.extend(m["rerank_mrrs"])
-        all_lgb.extend(m["lgb_mrrs"])
-
-        print(f"\n  [{lang.upper()}] — {n} Test Queries")
-        print(f"    ├─ Dense Only:      {avg_d:.4f}")
-        print(f"    ├─ Sparse Only:     {avg_s:.4f}")
-        print(f"    ├─ RRF Output:      {avg_r:.4f}")
-        print(f"    ├─ Reranker:        {avg_re:.4f}")
-        print(f"    └─ LightGBM Ranker: {avg_x:.4f}")
-
-    # Global test-split averages
-    n_test = len(all_lgb)
-    print(f"\n  [GLOBAL TEST AVERAGE] — {n_test} Queries")
-    print(f"    ├─ Dense Only:      {sum(all_dense) / n_test:.4f}")
-    print(f"    ├─ Sparse Only:     {sum(all_sparse) / n_test:.4f}")
-    print(f"    ├─ RRF Output:      {sum(all_rrf) / n_test:.4f}")
-    print(f"    ├─ Reranker:        {sum(all_rerank) / n_test:.4f}")
-    print(f"    └─ LightGBM Ranker: {sum(all_lgb) / n_test:.4f}")
-    print("=" * 50 + "\n")
-
+    print("\n==================================================")
+    print(f"[GLOBAL AVERAGE] - {total_q} Total Test Queries")
+    for k in global_test.keys():
+        print(f"  ├─ {k}: {(global_test[k]/total_q):.4f}")
+    print("==================================================\n")
 
 @app.local_entrypoint()
 def main():

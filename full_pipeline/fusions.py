@@ -34,8 +34,7 @@ class ScoreFusionProcessor:
         "sparse_rank",
         "rrf_score",
         "rrf_rank",
-        "reranker_score",
-        "reranker_rank",
+        #"hard_indicator_score",
     ]
 
     def __init__(self, lgb_params: dict | None = None):
@@ -58,7 +57,7 @@ class ScoreFusionProcessor:
         sparse_ranked: list[int],
         rrf_scores: dict[int, float],
         rrf_ranked: list[int],
-        reranker_results: list[tuple[int, float]],
+        #hard_indicator_scores: dict[int, float],
     ) -> list[list[float]]:
         """Build feature vectors for all candidates of a single query.
 
@@ -70,7 +69,7 @@ class ScoreFusionProcessor:
             sparse_ranked: full list of doc IDs sorted by BM25 score descending.
             rrf_scores: dict {doc_id: rrf_score} for the top-k candidates.
             rrf_ranked: list of doc IDs sorted by RRF score descending.
-            reranker_results: list of (doc_id, reranker_score) sorted descending.
+            hard_indicator_scores: dict {doc_id: float} of extracted feature scores.
 
         Returns:
             list of feature vectors, one per candidate, in the same order as
@@ -93,11 +92,6 @@ class ScoreFusionProcessor:
 
         rrf_rank_lookup = {doc_id: rank for rank, doc_id in enumerate(rrf_ranked)}
 
-        reranker_score_lookup = {doc_id: score for doc_id, score in reranker_results}
-        reranker_rank_lookup = {
-            doc_id: rank for rank, (doc_id, _) in enumerate(reranker_results)
-        }
-
         # Default rank for docs not found (very large → low relevance signal)
         max_rank = len(dense_ranked)
 
@@ -110,8 +104,7 @@ class ScoreFusionProcessor:
                 float(sparse_rank_lookup.get(doc_id, max_rank)),
                 float(rrf_scores.get(doc_id, 0.0)),
                 float(rrf_rank_lookup.get(doc_id, len(rrf_ranked))),
-                float(reranker_score_lookup.get(doc_id, 0.0)),
-                float(reranker_rank_lookup.get(doc_id, len(reranker_results))),
+                #float(hard_indicator_scores.get(doc_id, 0.0)),
             ]
             features.append(feat)
 
@@ -126,9 +119,21 @@ class ScoreFusionProcessor:
             group: array of group sizes (number of candidates per query).
         """
         import lightgbm as lgb
+        
+        # update deprecated params to new names to avoid warnings
+        params = self.params.copy()
+        if "min_data_in_leaf" in params:
+            params["min_child_samples"] = params.pop("min_data_in_leaf")
 
-        clf = lgb.LGBMRanker(**self.params)
-        clf.fit(X, y, group=group)
+        clf = lgb.LGBMRanker(**params)
+        # Convert X to DataFrame with feature names if possible, else pass feature_name param
+        try:
+            import pandas as pd
+            X_df = pd.DataFrame(X, columns=self.FEATURE_NAMES)
+            clf.fit(X_df, y, group=group)
+        except ImportError:
+            clf.fit(X, y, group=group, feature_name=self.FEATURE_NAMES)
+            
         self.model = clf
 
         # Print feature importances
@@ -154,7 +159,12 @@ class ScoreFusionProcessor:
         if self.model is None:
             raise RuntimeError("Model not trained yet — call train() first.")
 
-        X = np.array(features)
+        try:
+            import pandas as pd
+            X = pd.DataFrame(features, columns=self.FEATURE_NAMES)
+        except ImportError:
+            X = np.array(features)
+
         scores = self.model.predict(X)
 
         results = list(zip(candidate_doc_ids, scores.tolist()))

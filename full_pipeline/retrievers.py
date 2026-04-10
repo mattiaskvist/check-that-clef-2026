@@ -145,7 +145,7 @@ class BGEM3Retriever(BaseRetriever):
 
 class HarrierRetriever(BaseRetriever):
     def __init__(
-        self, model_name: str = "microsoft/harrier-oss-v1-27b", batch_size: int = 2
+        self, model_name: str = "microsoft/harrier-oss-v1-0.6b", batch_size: int = 2
     ):
         import torch
         from sentence_transformers import SentenceTransformer, util
@@ -285,6 +285,7 @@ class SparseRetriever(BaseRetriever):
         return unigrams
 
     def index(self, collection: list[dict]):
+        self.corpus_docs = collection
         corpus = [self.document_to_text(doc) for doc in collection]
         tokenized_corpus = [self.tokenize(text) for text in corpus]
         self.bm25_model = BM25Plus(tokenized_corpus, k1=2.5, b=0.85)
@@ -336,7 +337,9 @@ class SparseRetriever(BaseRetriever):
                 if filtered_original
                 else translated_text
             )
-        except (TranslationNotFound, NotValidPayload, NotValidLength, RequestError):
+        except Exception as e:
+            import logging
+            logging.warning(f"Translation failed: {e}. Falling back to original.")
             return normalized_text or text
 
     def search(self, query: str, lang: str = "auto") -> tuple[list[int], np.ndarray]:
@@ -375,3 +378,123 @@ class SparseRetriever(BaseRetriever):
         venue = str(doc.get("venue") or "").strip()
         # Repeat title to boost its importance
         return f"{title} {title} {title} {title} {title} {title} {title} {title} {abstract} {authors} {venue}".strip()
+
+
+# ==========================================
+# HARD INDICATOR RETRIEVER INTERNALS
+# ==========================================
+
+class HardIndicatorRetriever:
+    """Natively computes hard indicator scores for candidates."""
+    
+    _COVID_BLOCKLIST = {
+        "covid", "covid-19", "covid19", "covid 19",
+        "sars-cov-2", "sars-cov2", "sarscov2", "sars cov 2",
+        "coronavirus", "corona", "corona virus",
+        "pandemic", "the pandemic",
+    }
+    
+    def __init__(self):
+        self._nlp_model = None
+        self._cc_instance = None
+        
+        self.extractors = {
+            "persons":     (self._extract_persons,     "fuzzy"),
+            "locations":   (self._extract_locations,   "location"),
+            "orgs":        (self._extract_orgs,        "fuzzy"),
+        }
+
+    def _filter_covid(self, entities: list[str]) -> list[str]:
+        return [e for e in entities if e.lower().strip() not in self._COVID_BLOCKLIST]
+
+    def _get_nlp(self):
+        if self._nlp_model is None:
+            import sys
+            _torch_backup = sys.modules.get("torch", "__MISSING__")
+            sys.modules["torch"] = None
+            try:
+                import spacy
+                self._nlp_model = spacy.load("en_core_web_sm")
+            finally:
+                if _torch_backup == "__MISSING__":
+                    sys.modules.pop("torch", None)
+                else:
+                    sys.modules["torch"] = _torch_backup
+        return self._nlp_model
+
+    def _extract_persons(self, text: str) -> list[str]:
+        return self._filter_covid([ent.text for ent in self._get_nlp()(text).ents if ent.label_ == "PERSON"])
+
+    def _extract_locations(self, text: str) -> list[str]:
+        return self._filter_covid([ent.text for ent in self._get_nlp()(text).ents if ent.label_ in ("GPE", "LOC")])
+
+    def _extract_orgs(self, text: str) -> list[str]:
+        return self._filter_covid([ent.text for ent in self._get_nlp()(text).ents if ent.label_ == "ORG"])
+
+    def _get_cc(self):
+        if self._cc_instance is None:
+            import logging
+            logging.getLogger("country_converter").setLevel(logging.ERROR)
+            import country_converter as coco
+            self._cc_instance = coco.CountryConverter()
+        return self._cc_instance
+        
+    def _normalize_location(self, entity: str) -> list[str]:
+        from geotext import GeoText
+        terms = [entity.lower().strip()]
+        country = self._get_cc().convert(names=entity, to="name_short", not_found=None)
+        if country:
+            terms.append(country.lower().strip())
+        geo = GeoText(entity.title())
+        if geo.country_mentions:
+            iso = list(geo.country_mentions.keys())[0]
+            parent = self._get_cc().convert(names=iso, to="name_short", not_found=None)
+            if parent:
+                terms.append(parent.lower().strip())
+        return list(set(terms))
+
+    def _matches(self, entities: list[str], target: str, strategy: str, threshold: int = 80) -> bool:
+        from rapidfuzz import fuzz
+        if not entities or not target:
+            return False
+        target_lower = target.lower()
+        for entity in entities:
+            if strategy == "exact":
+                if entity.lower().strip() in target_lower:
+                    return True
+            elif strategy == "location":
+                for term in self._normalize_location(entity):
+                    if fuzz.token_set_ratio(term, target_lower) >= threshold:
+                        return True
+            else:
+                if fuzz.token_set_ratio(entity.lower().strip(), target_lower) >= threshold:
+                    return True
+        return False
+        
+    def _score_single(self, query: str, document: str) -> float:
+        total_score = 0.0
+        for extractor_fn, strategy in self.extractors.values():
+            entities = extractor_fn(query)
+            for entity in entities:
+                if self._matches([entity], document, strategy):
+                    total_score += 1.0
+                else:
+                    total_score -= 1.0
+        return total_score
+
+    def score_candidates(self, query: str, candidates: list[int], article_texts: list[str]) -> dict[int, float]:
+        """Scores a list of document candidates for a given query.
+        
+        Args:
+            query (str): The search query text.
+            candidates (list[int]): List of document indices to score.
+            article_texts (list[str]): Complete list of article texts where index matches doc_id.
+            
+        Returns:
+            dict[int, float]: A dictionary mapping doc_id to its hard indicator score.
+        """
+        indicator_scores = {}
+        for doc_id in candidates:
+            article_text = article_texts[doc_id]
+            indicator_scores[doc_id] = self._score_single(query, article_text)
+        return indicator_scores

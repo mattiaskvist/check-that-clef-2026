@@ -65,7 +65,6 @@ class Gemma2BReranker(BaseReranker):
         return self.tokenizer.pad(
             inputs,
             padding=True,
-            max_length=max_length + len(sep_inputs) + len(prompt_inputs),
             pad_to_multiple_of=8,
             return_tensors="pt",
         )
