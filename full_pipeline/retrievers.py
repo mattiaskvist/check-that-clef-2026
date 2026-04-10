@@ -164,6 +164,7 @@ class HarrierRetriever(BaseRetriever):
         self.batch_size = batch_size
         self.query_embeddings = None
         self._query_embeddings_by_name = {}
+        self.prompt = "Instruct: Retrieve the implicitly referenced scientific article\nQuery: "
 
         print(f"Loading Dense Retriever ({model_name})...")
         self.model = SentenceTransformer(
@@ -260,7 +261,7 @@ class HarrierRetriever(BaseRetriever):
             path,
             f"query embeddings ({cache_name})",
             force_recompute=force_recompute,
-            prompt_name="web_search_query",
+            prompt=self.prompt,
         )
         self.query_embeddings = query_embeddings
         self._query_embeddings_by_name[cache_name] = query_embeddings

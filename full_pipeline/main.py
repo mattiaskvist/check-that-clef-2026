@@ -72,7 +72,10 @@ def evaluate_pipeline(
         CHECKTHAT_DATASET, "collection", split="collection"
     )
     collection_documents = collection_dataset.to_list()
-    article_texts = [article_to_text(doc) for doc in collection_documents]
+    article_texts = [
+        reranker.document_to_text(doc)[: reranker.max_length] # Truncate to avoid memory issues 
+        for doc in collection_documents
+    ]
     article_pubkeys = [doc["pubkey"] for doc in collection_documents]
     reranker_corpus = reranker.preprocess_corpus(collection_documents)
 
