@@ -5,6 +5,7 @@ __pycache__/
 *.py[codz]
 *$py.class
 collection_embeddings.npy
+.agent
 
 # C extensions
 *.so

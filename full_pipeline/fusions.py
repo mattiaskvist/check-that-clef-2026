@@ -1,6 +1,5 @@
 import numpy as np
 
-
 class FusionProcessor:
     @staticmethod
     def reciprocal_rank_fusion(
@@ -18,35 +17,7 @@ class FusionProcessor:
         top_scores = {doc_id: score for doc_id, score in top_docs}
         return top_ids, top_scores
 
-
-class ScoreFusionProcessor:
-    """XGBoost-based learned fusion layer.
-
-    Trains a binary classifier on per-candidate feature vectors built from
-    the scores and ranks produced by the upstream retrieval systems.
-    At inference time, candidates are re-ranked by predicted P(correct=1).
-    """
-
-    FEATURE_NAMES = [
-        "dense_score",
-        "dense_rank",
-        "sparse_score",
-        "sparse_rank",
-        "rrf_score",
-        "rrf_rank",
-    ]
-
-    def __init__(self, lgb_params: dict | None = None):
-        self.model = None
-        self.params = lgb_params or {
-            "objective": "binary",
-            "metric": "auc",
-            "learning_rate": 0.1,
-            "n_estimators": 100,
-            "num_leaves": 15,
-            "min_data_in_leaf": 10,
-        }
-
+class FeatureGenerator:
     @staticmethod
     def build_query_features(
         candidates: list[int],
@@ -56,113 +27,142 @@ class ScoreFusionProcessor:
         sparse_ranked: list[int],
         rrf_scores: dict[int, float],
         rrf_ranked: list[int],
+        include_rrf: bool = True,
     ) -> list[list[float]]:
-        """Build feature vectors for all candidates of a single query.
+        
+        if not candidates:
+            return []
 
-        Args:
-            candidates: list of candidate doc IDs (the RRF top-k).
-            dense_scores: numpy array where dense_scores[doc_id] = cosine_sim.
-            dense_ranked: full list of doc IDs sorted by dense score descending.
-            sparse_scores: numpy array where sparse_scores[doc_id] = BM25 score.
-            sparse_ranked: full list of doc IDs sorted by BM25 score descending.
-            rrf_scores: dict {doc_id: rrf_score} for the top-k candidates.
-            rrf_ranked: list of doc IDs sorted by RRF score descending.
+        # Invert the ranked lists to get O(1) exact ranks for every single candidate
+        dense_rank_array = np.empty(len(dense_scores), dtype=np.int32)
+        dense_rank_array[dense_ranked] = np.arange(len(dense_ranked))
 
-        Returns:
-            list of feature vectors, one per candidate, in the same order as
-            `candidates`.
-        """
-        # Pre-compute rank lookup dicts for O(1) access
-        # Only compute for the top portion of dense/sparse to avoid huge dicts
-        # (candidates are from RRF top-k, so their dense/sparse ranks are bounded)
-        dense_rank_lookup = {}
-        for rank, doc_id in enumerate(dense_ranked):
-            dense_rank_lookup[doc_id] = rank
-            if len(dense_rank_lookup) > 10000:
-                break
-
-        sparse_rank_lookup = {}
-        for rank, doc_id in enumerate(sparse_ranked):
-            sparse_rank_lookup[doc_id] = rank
-            if len(sparse_rank_lookup) > 10000:
-                break
+        sparse_rank_array = np.empty(len(sparse_scores), dtype=np.int32)
+        sparse_rank_array[sparse_ranked] = np.arange(len(sparse_ranked))
 
         rrf_rank_lookup = {doc_id: rank for rank, doc_id in enumerate(rrf_ranked)}
-
-        # Default rank for docs not found (very large → low relevance signal)
-        max_rank = len(dense_ranked)
 
         features = []
         for doc_id in candidates:
             feat = [
                 float(dense_scores[doc_id]),
-                float(dense_rank_lookup.get(doc_id, max_rank)),
+                float(dense_rank_array[doc_id]),
                 float(sparse_scores[doc_id]),
-                float(sparse_rank_lookup.get(doc_id, max_rank)),
-                float(rrf_scores.get(doc_id, 0.0)),
-                float(rrf_rank_lookup.get(doc_id, len(rrf_ranked))),
+                float(sparse_rank_array[doc_id]),
             ]
+            if include_rrf:
+                feat.extend([
+                    float(rrf_scores.get(doc_id, 0.0)),
+                    float(rrf_rank_lookup.get(doc_id, len(rrf_ranked))),
+                ])
             features.append(feat)
 
         return features
 
-    def train(self, X: np.ndarray, y: np.ndarray, group: np.ndarray | list[int]):
-        """Train LightGBM LambdaMART ranker.
+    @staticmethod
+    def get_feature_names(include_rrf: bool = True) -> list[str]:
+        names = ["dense_score", "dense_rank", "sparse_score", "sparse_rank"]
+        if include_rrf:
+            names.extend(["rrf_score", "rrf_rank"])
+        return names
 
-        Args:
-            X: feature matrix of shape (n_samples, 8).
-            y: binary labels of shape (n_samples,).
-            group: array of group sizes (number of candidates per query).
-        """
-        import lightgbm as lgb
+
+class BaseMLFuser:
+    def __init__(self, include_rrf: bool = True):
+        self.model = None
+        self.include_rrf = include_rrf
         
-        # update deprecated params to new names to avoid warnings
+    @property
+    def feature_names(self):
+        return FeatureGenerator.get_feature_names(self.include_rrf)
+
+    def train(self, X: np.ndarray, y: np.ndarray, group: np.ndarray | list[int] = None):
+        raise NotImplementedError
+
+    def predict_and_rerank(self, candidate_doc_ids: list[int], features: list[list[float]]) -> list[tuple[int, float]]:
+        if self.model is None:
+            raise RuntimeError("Model not trained yet — call train() first.")
+        
+        scores = self._predict(features)
+        results = list(zip(candidate_doc_ids, scores))
+        results.sort(key=lambda x: x[1], reverse=True)
+        return results
+
+    def _predict(self, features: list[list[float]]) -> list[float]:
+        raise NotImplementedError
+
+class LGBMFuser(BaseMLFuser):
+    def __init__(self, include_rrf: bool = True, lgb_params: dict | None = None):
+        super().__init__(include_rrf)
+        self.params = lgb_params or {
+            "objective": "binary",
+            "metric": "auc",
+            "learning_rate": 0.1,
+            "n_estimators": 100,
+            "num_leaves": 15,
+            "min_data_in_leaf": 10,
+            "verbose": -1,
+        }
+
+    def train(self, X: np.ndarray, y: np.ndarray, group: np.ndarray | list[int] = None):
+        import lightgbm as lgb
         params = self.params.copy()
         if "min_data_in_leaf" in params:
             params["min_child_samples"] = params.pop("min_data_in_leaf")
 
-        clf = lgb.LGBMRanker(**params)
-        # Convert X to DataFrame with feature names if possible, else pass feature_name param
+        clf = lgb.LGBMClassifier(**params)
         try:
             import pandas as pd
-            X_df = pd.DataFrame(X, columns=self.FEATURE_NAMES)
-            clf.fit(X_df, y, group=group)
+            X_df = pd.DataFrame(X, columns=self.feature_names)
+            clf.fit(X_df, y)
         except ImportError:
-            clf.fit(X, y, group=group, feature_name=self.FEATURE_NAMES)
+            clf.fit(X, y, feature_name=self.feature_names)
             
         self.model = clf
 
-        # Print feature importances
-        importances = clf.feature_importances_
-        print("\n[LightGBM] Feature importances:")
-        for name, imp in sorted(
-            zip(self.FEATURE_NAMES, importances), key=lambda x: x[1], reverse=True
-        ):
-            print(f"  {name:20s} {imp}")
-
-    def predict_and_rerank(
-        self, candidate_doc_ids: list[int], features: list[list[float]]
-    ) -> list[tuple[int, float]]:
-        """Predict LambdaMART score for each candidate and return sorted descending.
-
-        Args:
-            candidate_doc_ids: list of doc IDs.
-            features: list of feature vectors (same order as candidate_doc_ids).
-
-        Returns:
-            list of (doc_id, score) sorted by score descending.
-        """
-        if self.model is None:
-            raise RuntimeError("Model not trained yet — call train() first.")
-
+    def _predict(self, features: list[list[float]]) -> list[float]:
         try:
             import pandas as pd
-            X = pd.DataFrame(features, columns=self.FEATURE_NAMES)
+            X = pd.DataFrame(features, columns=self.feature_names)
         except ImportError:
             X = np.array(features)
+        probs = self.model.predict_proba(X)
+        return probs[:, 1].tolist()
 
-        scores = self.model.predict(X)
+class XGBFuser(BaseMLFuser):
+    def train(self, X: np.ndarray, y: np.ndarray, group: np.ndarray | list[int] = None):
+        import xgboost as xgb
+        self.model = xgb.XGBClassifier(n_estimators=100, learning_rate=0.1, max_depth=4)
+        self.model.fit(np.array(X), np.array(y))
 
-        results = list(zip(candidate_doc_ids, scores.tolist()))
-        results.sort(key=lambda x: x[1], reverse=True)
-        return results
+    def _predict(self, features: list[list[float]]) -> list[float]:
+        import numpy as np
+        probs = self.model.predict_proba(np.array(features))
+        return probs[:, 1].tolist()
+
+class RandomForestFuser(BaseMLFuser):
+    def train(self, X: np.ndarray, y: np.ndarray, group: np.ndarray | list[int] = None):
+        from sklearn.ensemble import RandomForestClassifier
+        self.model = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42, n_jobs=-1)
+        self.model.fit(np.array(X), np.array(y))
+
+    def _predict(self, features: list[list[float]]) -> list[float]:
+        import numpy as np
+        probs = self.model.predict_proba(np.array(features))
+        return probs[:, 1].tolist()
+
+class LogisticRegressionFuser(BaseMLFuser):
+    def train(self, X: np.ndarray, y: np.ndarray, group: np.ndarray | list[int] = None):
+        from sklearn.linear_model import LogisticRegression
+        # Scale inputs just in case to help convergence (though we min-max scaled rank bounds are huge)
+        from sklearn.preprocessing import StandardScaler
+        self.scaler = StandardScaler()
+        X_scaled = self.scaler.fit_transform(np.array(X))
+        self.model = LogisticRegression(max_iter=1000)
+        self.model.fit(X_scaled, np.array(y))
+
+    def _predict(self, features: list[list[float]]) -> list[float]:
+        import numpy as np
+        X_scaled = self.scaler.transform(np.array(features))
+        probs = self.model.predict_proba(X_scaled)
+        return probs[:, 1].tolist()
