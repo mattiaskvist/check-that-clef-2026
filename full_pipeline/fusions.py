@@ -39,8 +39,8 @@ class ScoreFusionProcessor:
     def __init__(self, lgb_params: dict | None = None):
         self.model = None
         self.params = lgb_params or {
-            "objective": "lambdarank",
-            "metric": "ndcg",
+            "objective": "binary",
+            "metric": "auc",
             "learning_rate": 0.1,
             "n_estimators": 100,
             "num_leaves": 15,

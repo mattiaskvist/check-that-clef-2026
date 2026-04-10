@@ -1,8 +1,7 @@
 import modal
 
-from .rerankers import NemotronReranker, Gemma2BReranker
 from .retrievers import HarrierRetriever, SparseRetriever, BGEM3Retriever
-from .utils import CHECKTHAT_DATASET, FusionProcessor, MRR_at_5, article_to_text
+from .utils import CHECKTHAT_DATASET, FusionProcessor, MRR_at_5, Recall_at_k, article_to_text
 from .fusions import ScoreFusionProcessor
 
 # ==========================================
@@ -59,7 +58,6 @@ def evaluate_pipeline():
     # --- INITIALIZE COMPONENTS ---
     dense_retriever = HarrierRetriever()
     sparse_retriever = SparseRetriever()
-    reranker = Gemma2BReranker()
     fusion = FusionProcessor()
 
     # --- LOAD & INDEX COLLECTION ---
@@ -149,7 +147,7 @@ def evaluate_pipeline():
     print("  TESTING PIPELINE (50% Held-Out)")
     print("=" * 50)
 
-    test_metrics = {lang: {"dense": [], "sparse": [], "rrf": [], "lgb": [], "old_final": [], "new_final": []} for lang in languages}
+    test_metrics = {lang: {"dense_r10": [], "dense_r30": [], "dense_r50": [], "sparse_r10": [], "sparse_r30": [], "sparse_r50": [], "rrf_r10": [], "rrf_r30": [], "rrf_r50": [], "lgb_r10": [], "lgb_r30": [], "lgb_r50": []} for lang in languages}
 
     for lang in languages:
         tweets = lang_tweets[lang]["tweets"]
@@ -160,17 +158,21 @@ def evaluate_pipeline():
             dense_ranks, dense_scores = dense_retriever.search(i, cache_name=f"queries_{lang}")
             sparse_ranks, sparse_scores = sparse_retriever.search(query_text)
 
-            test_metrics[lang]["dense"].append(MRR_at_5([article_pubkeys[idx] for idx in dense_ranks], true_pubkey))
-            test_metrics[lang]["sparse"].append(MRR_at_5([article_pubkeys[idx] for idx in sparse_ranks], true_pubkey))
-
-            # Old Pipeline: RRF Top 10 -> Reranker
-            old_fused, old_rrf_scores = fusion.reciprocal_rank_fusion([dense_ranks, sparse_ranks], top_k=10)
-            test_metrics[lang]["rrf"].append(MRR_at_5([article_pubkeys[idx] for idx in old_fused], true_pubkey))
+            test_metrics[lang]["dense_r10"].append(Recall_at_k([article_pubkeys[idx] for idx in dense_ranks], true_pubkey, 10))
+            test_metrics[lang]["dense_r30"].append(Recall_at_k([article_pubkeys[idx] for idx in dense_ranks], true_pubkey, 30))
+            test_metrics[lang]["dense_r50"].append(Recall_at_k([article_pubkeys[idx] for idx in dense_ranks], true_pubkey, 50))
             
-            old_reranked = reranker.rerank(query_text, old_fused, article_texts)
-            test_metrics[lang]["old_final"].append(MRR_at_5([article_pubkeys[idx] for idx, score in old_reranked], true_pubkey))
+            test_metrics[lang]["sparse_r10"].append(Recall_at_k([article_pubkeys[idx] for idx in sparse_ranks], true_pubkey, 10))
+            test_metrics[lang]["sparse_r30"].append(Recall_at_k([article_pubkeys[idx] for idx in sparse_ranks], true_pubkey, 30))
+            test_metrics[lang]["sparse_r50"].append(Recall_at_k([article_pubkeys[idx] for idx in sparse_ranks], true_pubkey, 50))
 
-            # New Pipeline: Union 100 -> LGB(Features) -> Top 10 -> Reranker
+            # Old Pipeline Fuser: RRF Top 50
+            old_fused, old_rrf_scores = fusion.reciprocal_rank_fusion([dense_ranks, sparse_ranks], top_k=50)
+            test_metrics[lang]["rrf_r10"].append(Recall_at_k([article_pubkeys[idx] for idx in old_fused], true_pubkey, 10))
+            test_metrics[lang]["rrf_r30"].append(Recall_at_k([article_pubkeys[idx] for idx in old_fused], true_pubkey, 30))
+            test_metrics[lang]["rrf_r50"].append(Recall_at_k([article_pubkeys[idx] for idx in old_fused], true_pubkey, 50))
+            
+            # New Pipeline Fuser: LGB
             union_candidates = list(dict.fromkeys(dense_ranks[:100] + sparse_ranks[:100]))
             rrf_ranks, rrf_scores = fusion.reciprocal_rank_fusion([dense_ranks, sparse_ranks], top_k=len(union_candidates))
             
@@ -185,15 +187,14 @@ def evaluate_pipeline():
             )
 
             lgb_results = score_fusions[lang].predict_and_rerank(union_candidates, features)
-            lgb_top10 = [doc_id for doc_id, score in lgb_results[:10]]
-            test_metrics[lang]["lgb"].append(MRR_at_5([article_pubkeys[idx] for idx in lgb_top10], true_pubkey))
-
-            new_reranked = reranker.rerank(query_text, lgb_top10, article_texts)
-            test_metrics[lang]["new_final"].append(MRR_at_5([article_pubkeys[idx] for idx, score in new_reranked], true_pubkey))
+            lgb_top50 = [doc_id for doc_id, score in lgb_results[:50]]
+            test_metrics[lang]["lgb_r10"].append(Recall_at_k([article_pubkeys[idx] for idx in lgb_top50], true_pubkey, 10))
+            test_metrics[lang]["lgb_r30"].append(Recall_at_k([article_pubkeys[idx] for idx in lgb_top50], true_pubkey, 30))
+            test_metrics[lang]["lgb_r50"].append(Recall_at_k([article_pubkeys[idx] for idx in lgb_top50], true_pubkey, 50))
 
     # Calculate global testing metrics
     print("\n\n" + "*" * 50)
-    print("*" + " FINAL MULTILINGUAL TEST SUMMARY ".center(48) + "*")
+    print("*" + " FINAL MULTILINGUAL RECALL TEST ".center(48) + "*")
     print("*" * 50)
 
     global_test = {k: 0.0 for k in test_metrics["en"].keys()}
@@ -201,24 +202,24 @@ def evaluate_pipeline():
 
     for lang in languages:
         m = test_metrics[lang]
-        n_q = len(m["dense"])
+        n_q = len(m["dense_r10"])
         if n_q == 0: continue
         total_q += n_q
         print(f"\n[{lang.upper()}] - {n_q} Queries")
-        print(f"  ├─ Dense Only:        {sum(m['dense'])/n_q:.4f}")
-        print(f"  ├─ Sparse Only:       {sum(m['sparse'])/n_q:.4f}")
-        print(f"  ├─ Old Fusion (RRF):  {sum(m['rrf'])/n_q:.4f}")
-        print(f"  ├─ New Fusion (LGB):  {sum(m['lgb'])/n_q:.4f}")
-        print(f"  ├─ Old Pipeline Flow: {sum(m['old_final'])/n_q:.4f}  (RRF -> Neural)")
-        print(f"  └─ New Pipeline Flow: {sum(m['new_final'])/n_q:.4f}  (LGB -> Neural)")
+        print(f"  ├─ Dense Only:        R@10: {sum(m['dense_r10'])/n_q:.4f}  |  R@30: {sum(m['dense_r30'])/n_q:.4f}  |  R@50: {sum(m['dense_r50'])/n_q:.4f}")
+        print(f"  ├─ Sparse Only:       R@10: {sum(m['sparse_r10'])/n_q:.4f}  |  R@30: {sum(m['sparse_r30'])/n_q:.4f}  |  R@50: {sum(m['sparse_r50'])/n_q:.4f}")
+        print(f"  ├─ RRF Fusion:        R@10: {sum(m['rrf_r10'])/n_q:.4f}  |  R@30: {sum(m['rrf_r30'])/n_q:.4f}  |  R@50: {sum(m['rrf_r50'])/n_q:.4f}")
+        print(f"  └─ LGB Fusion:        R@10: {sum(m['lgb_r10'])/n_q:.4f}  |  R@30: {sum(m['lgb_r30'])/n_q:.4f}  |  R@50: {sum(m['lgb_r50'])/n_q:.4f}")
 
         for k in global_test.keys():
             global_test[k] += sum(m[k])
 
     print("\n==================================================")
     print(f"[GLOBAL AVERAGE] - {total_q} Total Test Queries")
-    for k in global_test.keys():
-        print(f"  ├─ {k}: {(global_test[k]/total_q):.4f}")
+    print(f"  ├─ Dense Only:        R@10: {global_test['dense_r10']/total_q:.4f}  |  R@30: {global_test['dense_r30']/total_q:.4f}  |  R@50: {global_test['dense_r50']/total_q:.4f}")
+    print(f"  ├─ Sparse Only:       R@10: {global_test['sparse_r10']/total_q:.4f}  |  R@30: {global_test['sparse_r30']/total_q:.4f}  |  R@50: {global_test['sparse_r50']/total_q:.4f}")
+    print(f"  ├─ RRF Fusion:        R@10: {global_test['rrf_r10']/total_q:.4f}  |  R@30: {global_test['rrf_r30']/total_q:.4f}  |  R@50: {global_test['rrf_r50']/total_q:.4f}")
+    print(f"  └─ LGB Fusion:        R@10: {global_test['lgb_r10']/total_q:.4f}  |  R@30: {global_test['lgb_r30']/total_q:.4f}  |  R@50: {global_test['lgb_r50']/total_q:.4f}")
     print("==================================================\n")
 
 @app.local_entrypoint()

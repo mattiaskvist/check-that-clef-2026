@@ -22,6 +22,11 @@ def MRR_at_5(preds: list[str], label: str) -> float:
         return 0.0
 
 
+def Recall_at_k(preds: list[str], label: str, k: int) -> float:
+    preds = preds[:k]
+    return 1.0 if label in preds else 0.0
+
+
 class FusionProcessor:
     @staticmethod
     def reciprocal_rank_fusion(
