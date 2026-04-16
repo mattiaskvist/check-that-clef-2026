@@ -118,3 +118,33 @@ Note: These numbers will need to be updated as we continue to refine the pipelin
 - Improve the sparse retrieval component by experimenting with different BM25 parameters or even trying out more advanced sparse retrieval models like SPLADE or DeepCT, which can provide better sparse representations and potentially improve the overall fusion results.
 
 - Work on how metadata from the documents can be better utilized in the retrieval and re-ranking process. Currently, the pipeline only uses the title and abstract for retrieval, but `authors` and `venue` information could also be valuable signals for both retrieval and re-ranking. We can experiment with ways to incorporate this metadata, such as concatenating it with the title and abstract for the dense retriever, or using it as additional features in the re-ranking stage. Maybe we can use the information to look for matches and boost scores for documents that have the same authors or are published in the same venue as the query paper, as these could be strong indicators of relevance.
+
+## Streamlit Demo (Modular Pipeline)
+
+The repository now includes a configurable pipeline layer (`pipeline.py`, `pipeline_config.py`, `registry.py`) and a Streamlit demo app.
+
+### Local Streamlit demo
+
+```bash
+uv sync
+uv run streamlit run full_pipeline/demo_app.py
+```
+
+The demo:
+- indexes the full collection;
+- optionally merges custom JSON documents by `pubkey` (custom overrides base);
+- allows selecting one or more retrievers;
+- allows enabling/disabling fusion and reranking;
+- returns top-5 matches for a user tweet.
+
+### Host Streamlit demo on Modal
+
+```bash
+uv run modal serve -m full_pipeline.demo_modal
+```
+
+To deploy persistently:
+
+```bash
+uv run modal deploy -m full_pipeline.demo_modal
+```

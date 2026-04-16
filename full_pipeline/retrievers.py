@@ -152,6 +152,10 @@ class BGEM3Retriever(BaseRetriever):
 
 
 class HarrierRetriever(BaseRetriever):
+    DEFAULT_QUERY_PROMPT = (
+        "Instruct: Retrieve the implicitly referenced scientific article\nQuery: "
+    )
+
     def __init__(
         self, model_name: str = "microsoft/harrier-oss-v1-27b", batch_size: int = 2
     ):
@@ -164,7 +168,7 @@ class HarrierRetriever(BaseRetriever):
         self.batch_size = batch_size
         self.query_embeddings = None
         self._query_embeddings_by_name = {}
-        self.prompt = "Instruct: Retrieve the implicitly referenced scientific article\nQuery: "
+        self.prompt = self.DEFAULT_QUERY_PROMPT
 
         print(f"Loading Dense Retriever ({model_name})...")
         self.model = SentenceTransformer(
@@ -261,7 +265,7 @@ class HarrierRetriever(BaseRetriever):
             path,
             f"query embeddings ({cache_name})",
             force_recompute=force_recompute,
-            prompt=self.prompt,
+            prompt=getattr(self, "prompt", self.DEFAULT_QUERY_PROMPT),
         )
         self.query_embeddings = query_embeddings
         self._query_embeddings_by_name[cache_name] = query_embeddings
