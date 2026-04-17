@@ -23,6 +23,17 @@ uv run modal secret create hf-token HF_TOKEN=hf_XXXXXXXXXXXXXXXXXXXXXXXXXXXX
 uv run modal run -d -m full_pipeline.main
 ```
 
+## How the Modal workflow works
+
+- `uv run modal run ...` starts your **local entrypoint** on your machine, and that entrypoint launches the heavy retrieval/reranking work as a **remote Modal function**.
+- The expensive compute (GPU, model inference, indexing) runs in Modal's cloud containers, not on your laptop.
+- With `-d`, the app is not stopped if your local process dies or disconnects.
+
+### Do you need to keep your computer running?
+
+- For pure evaluation runs (`uv run modal run -d -m full_pipeline.main`), you can treat it as fire-and-forget once it's started.
+- For submission export, this project writes `predictions_{lang}.tsv` to the Modal volume and prints a `modal volume get ...` command you can run locally to download them.
+
 Sparse query rankings and scores are cached between runs (under the existing Modal volume mount), so reranking and fusion experiments can iterate without recomputing BM25 for each query.
 
 If you need to rebuild sparse cache artifacts after code changes, run:
@@ -39,6 +50,48 @@ uv run modal run -d -m full_pipeline.main --force-recompute-dense-documents
 
 # Recompute dense query embeddings
 uv run modal run -d -m full_pipeline.main --force-recompute-dense-queries
+```
+
+## Export submission TSV files
+
+To generate Codabench-ready `predictions_{lang}.tsv` files (columns: `index`, `preds`), run:
+
+```bash
+uv run modal run -m full_pipeline.main \
+  --split dev \
+  --export-submission-tsv \
+  --submission-volume-subdir submissions \
+  --submission-download-dir submissions
+```
+
+For competition export, switch to the unlabeled split:
+
+```bash
+uv run modal run -m full_pipeline.main \
+  --split test \
+  --export-submission-tsv \
+  --submission-volume-subdir submissions \
+  --submission-download-dir submissions
+```
+
+You can also run on `train` for debugging or analysis:
+
+```bash
+uv run modal run -m full_pipeline.main \
+  --split train \
+  --export-submission-tsv \
+  --submission-volume-subdir submissions \
+  --submission-download-dir submissions
+```
+
+This writes one TSV per language (for example `predictions_en.tsv`, `predictions_de.tsv`, `predictions_fr.tsv`) into the Modal volume under:
+
+`/submissions/<split>-<timestamp>`
+
+At the end of the run, the command prints an exact download command you can run locally, for example:
+
+```bash
+uv run modal volume get checkthat-embedding-cache /submissions/dev-20260416-191700 submissions
 ```
 
 ## Current Stats on Dev
