@@ -366,6 +366,31 @@ class HarrierRetriever(BaseRetriever):
         self.torch.cuda.empty_cache()
         print("Embedding model unloaded, GPU memory freed.")
 
+    def search_with_scores(
+        self, query_idx: int, cache_name: str | None = None
+    ) -> tuple[list[int], list[float]]:
+        """Return (ranked_doc_ids, scores) for a cached query.
+
+        Mirrors SparseRetriever.search_with_scores(). The scores list is
+        indexed by doc_id (not by rank), matching the dense score array layout
+        needed by FeatureGenerator.
+        """
+        if cache_name is None:
+            query_embeddings = self.query_embeddings
+            if query_embeddings is None:
+                raise ValueError(
+                    "No query embeddings loaded. Call index_queries(...) first."
+                )
+        else:
+            query_sets = getattr(self, "_query_embeddings_by_name", {})
+            if cache_name not in query_sets:
+                raise KeyError(f"No query cache named '{cache_name}' is available.")
+            query_embeddings = query_sets[cache_name]
+
+        scores = self.util.cos_sim(query_embeddings[query_idx], self.embeddings)[0]
+        ranked = self.torch.argsort(scores, descending=True).tolist()
+        return ranked, scores.cpu().numpy().tolist()
+
     def search(self, query_idx: int, cache_name: str | None = None) -> list[int]:
         """Return dense ranking for one indexed query.
 
@@ -689,17 +714,30 @@ class SparseRetriever(BaseRetriever):
         Raises:
             TypeError: If query type does not match cache usage mode.
         """
+
+        def _scores_by_doc_id(
+            ranked_indices: np.ndarray, ranked_scores: np.ndarray
+        ) -> list[float]:
+            corpus_size = len(getattr(getattr(self, "bm25_model", None), "doc_len", []))
+            if corpus_size <= 0 and len(ranked_indices) > 0:
+                corpus_size = int(np.max(ranked_indices)) + 1
+            full_scores = np.zeros(corpus_size, dtype=np.float32)
+            full_scores[ranked_indices] = ranked_scores
+            return full_scores.tolist()
+
         if cache_name is not None:
             if not isinstance(query, int):
                 raise TypeError("Cached sparse lookup requires query index (int).")
             ranked_indices, ranked_scores = self._get_cached_query(query, cache_name)
-            return ranked_indices.tolist(), ranked_scores.tolist()
+            return ranked_indices.tolist(), _scores_by_doc_id(
+                ranked_indices, ranked_scores
+            )
 
         if not isinstance(query, str):
             raise TypeError("Query must be a string when cache_name is not provided.")
 
         ranked_indices, ranked_scores = self._score_query(query, lang=lang, top_k=None)
-        return ranked_indices.tolist(), ranked_scores.tolist()
+        return ranked_indices.tolist(), _scores_by_doc_id(ranked_indices, ranked_scores)
 
     def search(
         self, query: str | int, lang: str = "auto", cache_name: str | None = None

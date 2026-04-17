@@ -163,14 +163,20 @@ class SparseRetrieverRegressionTests(unittest.TestCase):
             "sparse_de": np.asarray([[4, 1, 0], [2, 1, 0]], dtype=np.int32)
         }
         retriever._query_scores_by_name = {
-            "sparse_de": np.asarray([[0.9, 0.5, 0.2], [1.2, 0.4, 0.1]], dtype=np.float32)
+            "sparse_de": np.asarray(
+                [[0.9, 0.5, 0.2], [1.2, 0.4, 0.1]], dtype=np.float32
+            )
         }
 
         self.assertEqual(retriever.search(1, cache_name="sparse_de"), [2, 1, 0])
         ranks, scores = retriever.search_with_scores(0, cache_name="sparse_de")
         self.assertEqual(ranks, [4, 1, 0])
-        for actual, expected in zip(scores, [0.9, 0.5, 0.2]):
-            self.assertAlmostEqual(actual, expected, places=6)
+        self.assertEqual(len(scores), 5)
+        self.assertAlmostEqual(scores[0], 0.2, places=6)
+        self.assertAlmostEqual(scores[1], 0.5, places=6)
+        self.assertAlmostEqual(scores[2], 0.0, places=6)
+        self.assertAlmostEqual(scores[3], 0.0, places=6)
+        self.assertAlmostEqual(scores[4], 0.9, places=6)
 
     def test_cache_path_depends_on_query_fingerprint_and_top_k(self):
         retriever = SparseRetriever.__new__(SparseRetriever)

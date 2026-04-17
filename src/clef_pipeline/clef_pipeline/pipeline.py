@@ -5,9 +5,9 @@ from __future__ import annotations
 import uuid
 from collections import OrderedDict
 
+from .fusions import RRFFuser, RandomForestFuser
 from .interfaces import BaseReranker
 from .pipeline_config import PipelineConfig
-from .utils import FusionProcessor
 
 
 class RetrievalPipeline:
@@ -38,7 +38,15 @@ class RetrievalPipeline:
             self.retrievers[name] = retrievers[name]
 
         self.reranker = reranker if self.config.reranker.enabled else None
-        self.fusion = FusionProcessor()
+        if self.config.fusion_method == "rrf":
+            self.fuser = RRFFuser()
+        elif self.config.fusion_method == "random_forest":
+            self.fuser = RandomForestFuser()
+        else:
+            raise ValueError(
+                f"Unknown fusion method: {self.config.fusion_method}. "
+                "Use 'rrf' or 'random_forest'."
+            )
         self.collection_documents: list[dict] = []
         self.article_pubkeys: list[str] = []
         self.reranker_corpus: list[str] = []
@@ -231,9 +239,24 @@ class RetrievalPipeline:
             if 0 <= idx < len(self.article_pubkeys)
         ]
 
+    @staticmethod
+    def _resolve_dense_sparse_stage_keys(
+        ranked_indices_by_stage: dict[str, list[int]],
+    ) -> tuple[str | None, str | None]:
+        """Resolve dense and sparse stage keys from retriever-stage outputs."""
+        dense_key = next(
+            (key for key in ranked_indices_by_stage if not key.startswith("sparse")),
+            None,
+        )
+        sparse_key = next(
+            (key for key in ranked_indices_by_stage if key.startswith("sparse")),
+            None,
+        )
+        return dense_key, sparse_key
+
     def _run_retrievers_for_query(
         self, query_idx: int, lang: str
-    ) -> dict[str, list[int]]:
+    ) -> tuple[dict[str, list[int]], dict[str, list[float]]]:
         """Run all retrievers for one indexed query.
 
         Args:
@@ -241,32 +264,71 @@ class RetrievalPipeline:
             lang: Cache language key used when indexing queries.
 
         Returns:
-            Ranked indices per retriever stage.
+            Ranked indices per retriever stage and optional stage score lists.
 
         Raises:
             KeyError: If a retriever cache was not indexed for the language.
         """
         ranked_indices_by_stage: dict[str, list[int]] = {}
+        score_lists_by_stage: dict[str, list[float]] = {}
         for retriever_name, retriever in self.retrievers.items():
             cache_name = self._cache_names.get((retriever_name, lang))
             if cache_name is None:
                 raise KeyError(
                     f"No indexed query cache for retriever '{retriever_name}' and lang '{lang}'."
                 )
+
+            search_with_scores = getattr(retriever, "search_with_scores", None)
+            if self.config.fusion_method == "random_forest" and callable(
+                search_with_scores
+            ):
+                ranked_indices, scores = search_with_scores(
+                    query_idx, cache_name=cache_name
+                )
+                ranked_indices_by_stage[retriever_name] = ranked_indices
+                score_lists_by_stage[retriever_name] = scores
+                continue
+
             ranked_indices_by_stage[retriever_name] = retriever.search(
                 query_idx, cache_name=cache_name
             )
-        return ranked_indices_by_stage
+        return ranked_indices_by_stage, score_lists_by_stage
 
     def _choose_candidates(
-        self, ranked_indices_by_stage: dict[str, list[int]]
+        self,
+        ranked_indices_by_stage: dict[str, list[int]],
+        score_lists_by_stage: dict[str, list[float]],
+        lang: str,
     ) -> list[int]:
         """Select candidate document indices from retriever outputs."""
         if not ranked_indices_by_stage:
             return []
         if self.config.use_fusion and len(ranked_indices_by_stage) > 1:
-            return self.fusion.reciprocal_rank_fusion(
-                list(ranked_indices_by_stage.values()),
+            if self.config.fusion_method == "random_forest":
+                dense_key, sparse_key = self._resolve_dense_sparse_stage_keys(
+                    ranked_indices_by_stage
+                )
+                if dense_key is None or sparse_key is None:
+                    raise ValueError(
+                        "Random forest fusion requires one dense and one sparse retriever."
+                    )
+                dense_scores = score_lists_by_stage.get(dense_key)
+                sparse_scores = score_lists_by_stage.get(sparse_key)
+                if dense_scores is None or sparse_scores is None:
+                    raise ValueError(
+                        "Random forest fusion requires score lists from both retrievers."
+                    )
+                return self.fuser.fuse(
+                    ranked_lists=[
+                        ranked_indices_by_stage[dense_key],
+                        ranked_indices_by_stage[sparse_key],
+                    ],
+                    scores_lists=[dense_scores, sparse_scores],
+                    top_k=self.config.fusion_top_k,
+                    lang=lang,
+                )
+            return self.fuser.fuse(
+                ranked_lists=list(ranked_indices_by_stage.values()),
                 top_k=self.config.fusion_top_k,
             )
         first_stage = next(iter(ranked_indices_by_stage.values()))
@@ -298,22 +360,18 @@ class RetrievalPipeline:
         Returns:
             Dict containing final predictions and per-stage publication keys.
         """
-        ranked_indices_by_stage = self._run_retrievers_for_query(
+        ranked_indices_by_stage, score_lists_by_stage = self._run_retrievers_for_query(
             query_idx=query_idx, lang=lang
         )
-        candidate_indices = self._choose_candidates(ranked_indices_by_stage)
+        candidate_indices = self._choose_candidates(
+            ranked_indices_by_stage=ranked_indices_by_stage,
+            score_lists_by_stage=score_lists_by_stage,
+            lang=lang,
+        )
         final_indices = self._apply_reranker(query_text, candidate_indices)
 
-        dense_key = next(
-            (
-                key
-                for key in ranked_indices_by_stage
-                if key.startswith("harrier") or key.startswith("bge")
-            ),
-            None,
-        )
-        sparse_key = next(
-            (key for key in ranked_indices_by_stage if key.startswith("sparse")), None
+        dense_key, sparse_key = self._resolve_dense_sparse_stage_keys(
+            ranked_indices_by_stage
         )
         stages = {
             "dense": self._stage_pubkeys(ranked_indices_by_stage.get(dense_key, [])),
@@ -345,6 +403,22 @@ class RetrievalPipeline:
         return self.search_cached_query(
             query_idx=0, query_text=query_text, lang=cache_lang
         )
+
+    def get_fusion_retrievers(self) -> tuple[object, object]:
+        """Return dense and sparse retriever instances used by fusion."""
+        dense_name = next(
+            (name for name in self.retrievers.keys() if not name.startswith("sparse")),
+            None,
+        )
+        sparse_name = next(
+            (name for name in self.retrievers.keys() if name.startswith("sparse")),
+            None,
+        )
+        if dense_name is None or sparse_name is None:
+            raise ValueError(
+                "Pipeline must have one dense and one sparse retriever for fusion."
+            )
+        return self.retrievers[dense_name], self.retrievers[sparse_name]
 
     def unload_dense_models(self):
         """Unload dense retriever models from GPU while keeping cached embeddings."""
