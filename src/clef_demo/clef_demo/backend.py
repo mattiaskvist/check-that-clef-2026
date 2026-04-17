@@ -29,7 +29,9 @@ embedding_cache = modal.Volume.from_name(
 @app.cls(
     image=image,
     gpu="A10G",
-    timeout=int(60 * 60 * 0.5),  # 15 mins max runtime to avoid unexpected long-running costs
+    timeout=int(
+        60 * 60 * 0.5
+    ),  # 15 mins max runtime to avoid unexpected long-running costs
     volumes={"/cache/embeddings": embedding_cache},
     secrets=[modal.Secret.from_name("hf-token")],
     scaledown_window=150,  # Keeps GPU alive for 2.5 mins
@@ -44,7 +46,6 @@ class PipelineBackend:
         fusion_top_k: int,
         custom_docs: list[dict],
     ):
-        from datasets import load_dataset
         from clef_pipeline.pipeline_config import (
             PipelineConfig,
             RerankerConfig,
@@ -52,6 +53,7 @@ class PipelineBackend:
         )
         from clef_pipeline.registry import build_pipeline_from_config
         from clef_pipeline.utils import CHECKTHAT_DATASET
+        from datasets import load_dataset
 
         config = PipelineConfig(
             retrievers=[RetrieverConfig(name=name) for name in selected_retrievers],
@@ -69,7 +71,7 @@ class PipelineBackend:
         ).to_list()
         self.pipeline = build_pipeline_from_config(config)
         self.pipeline.index_collection(base_docs, custom_documents=custom_docs)
-        
+
         # only grab the first 5 documents to send back as a preview
         # The full dataset stays safely in the GPU's memory,
         # while keeping the response lightweight and fast for the UI

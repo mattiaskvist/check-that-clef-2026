@@ -357,7 +357,9 @@ class SparseRetriever(BaseRetriever):
 
         translated_query = self._translate_query(query, lang)
         tokenized_query = self.tokenize(translated_query)
-        scores = np.asarray(self.bm25_model.get_scores(tokenized_query), dtype=np.float32)
+        scores = np.asarray(
+            self.bm25_model.get_scores(tokenized_query), dtype=np.float32
+        )
         ranked_indices = np.argsort(scores)[::-1]
         if top_k is not None:
             ranked_indices = ranked_indices[:top_k]
@@ -452,7 +454,9 @@ class SparseRetriever(BaseRetriever):
         if cache_path:
             os.makedirs(os.path.dirname(cache_path), exist_ok=True)
             np.savez_compressed(cache_path, rankings=rankings, scores=scores)
-            print(f"[cache miss] Saved sparse query cache ({cache_name}) to {cache_path}")
+            print(
+                f"[cache miss] Saved sparse query cache ({cache_name}) to {cache_path}"
+            )
 
     def _translate_query(self, text: str, lang: str = "auto") -> str:
         """Helper function to translate non-English queries to English.

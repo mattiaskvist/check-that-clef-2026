@@ -43,7 +43,9 @@ def submission_volume_remote_dir(output_dir: str, cache_mount: str) -> str:
     if output_dir_abs == cache_mount_abs:
         return "/"
     if not output_dir_abs.startswith(prefix):
-        raise ValueError(f"Output directory must be under cache mount: {cache_mount_abs}")
+        raise ValueError(
+            f"Output directory must be under cache mount: {cache_mount_abs}"
+        )
 
     relative_path = os.path.relpath(output_dir_abs, cache_mount_abs)
     return f"/{relative_path.replace(os.sep, '/')}"

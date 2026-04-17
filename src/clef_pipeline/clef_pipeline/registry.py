@@ -34,7 +34,9 @@ def create_reranker(name: str, params: dict | None = None):
 
 def build_pipeline_from_config(config: PipelineConfig) -> RetrievalPipeline:
     retrievers = {
-        retriever_config.name: create_retriever(retriever_config.name, retriever_config.params)
+        retriever_config.name: create_retriever(
+            retriever_config.name, retriever_config.params
+        )
         for retriever_config in config.enabled_retrievers()
     }
 

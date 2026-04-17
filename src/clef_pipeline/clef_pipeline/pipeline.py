@@ -41,7 +41,9 @@ class RetrievalPipeline:
         if not custom_documents:
             return list(base_documents)
 
-        by_pubkey = OrderedDict((str(doc["pubkey"]), dict(doc)) for doc in base_documents)
+        by_pubkey = OrderedDict(
+            (str(doc["pubkey"]), dict(doc)) for doc in base_documents
+        )
         for custom_doc in custom_documents:
             pubkey = str(custom_doc["pubkey"])
             by_pubkey[pubkey] = dict(custom_doc)
@@ -110,12 +112,18 @@ class RetrievalPipeline:
         cache_dir: str | None = None,
         force_recompute_dense_documents: bool = False,
     ):
-        self.collection_documents = self._merge_documents(collection_documents, custom_documents)
+        self.collection_documents = self._merge_documents(
+            collection_documents, custom_documents
+        )
         self.article_pubkeys = [doc["pubkey"] for doc in self.collection_documents]
-        article_texts = [self._document_to_text(doc) for doc in self.collection_documents]
+        article_texts = [
+            self._document_to_text(doc) for doc in self.collection_documents
+        ]
 
         if self.reranker is not None:
-            self.reranker_corpus = self.reranker.preprocess_corpus(self.collection_documents)
+            self.reranker_corpus = self.reranker.preprocess_corpus(
+                self.collection_documents
+            )
         else:
             self.reranker_corpus = article_texts
 
@@ -159,18 +167,24 @@ class RetrievalPipeline:
             if 0 <= idx < len(self.article_pubkeys)
         ]
 
-    def _run_retrievers_for_query(self, query_idx: int, lang: str) -> dict[str, list[int]]:
+    def _run_retrievers_for_query(
+        self, query_idx: int, lang: str
+    ) -> dict[str, list[int]]:
         ranked_indices_by_stage: dict[str, list[int]] = {}
         for retriever_name, retriever in self.retrievers.items():
             cache_name = self._cache_names.get((retriever_name, lang))
             if cache_name is None:
-                raise KeyError(f"No indexed query cache for retriever '{retriever_name}' and lang '{lang}'.")
+                raise KeyError(
+                    f"No indexed query cache for retriever '{retriever_name}' and lang '{lang}'."
+                )
             ranked_indices_by_stage[retriever_name] = retriever.search(
                 query_idx, cache_name=cache_name
             )
         return ranked_indices_by_stage
 
-    def _choose_candidates(self, ranked_indices_by_stage: dict[str, list[int]]) -> list[int]:
+    def _choose_candidates(
+        self, ranked_indices_by_stage: dict[str, list[int]]
+    ) -> list[int]:
         if not ranked_indices_by_stage:
             return []
         if self.config.use_fusion and len(ranked_indices_by_stage) > 1:
@@ -181,7 +195,9 @@ class RetrievalPipeline:
         first_stage = next(iter(ranked_indices_by_stage.values()))
         return first_stage[: self.config.fusion_top_k]
 
-    def _apply_reranker(self, query_text: str, candidate_indices: list[int]) -> list[int]:
+    def _apply_reranker(
+        self, query_text: str, candidate_indices: list[int]
+    ) -> list[int]:
         if self.reranker is None or not candidate_indices:
             return candidate_indices
         reranked = self.reranker.rerank(
@@ -191,13 +207,26 @@ class RetrievalPipeline:
         )
         return [doc_idx for doc_idx, _score in reranked]
 
-    def search_cached_query(self, query_idx: int, query_text: str, lang: str) -> dict[str, object]:
-        ranked_indices_by_stage = self._run_retrievers_for_query(query_idx=query_idx, lang=lang)
+    def search_cached_query(
+        self, query_idx: int, query_text: str, lang: str
+    ) -> dict[str, object]:
+        ranked_indices_by_stage = self._run_retrievers_for_query(
+            query_idx=query_idx, lang=lang
+        )
         candidate_indices = self._choose_candidates(ranked_indices_by_stage)
         final_indices = self._apply_reranker(query_text, candidate_indices)
 
-        dense_key = next((key for key in ranked_indices_by_stage if key.startswith("harrier") or key.startswith("bge")), None)
-        sparse_key = next((key for key in ranked_indices_by_stage if key.startswith("sparse")), None)
+        dense_key = next(
+            (
+                key
+                for key in ranked_indices_by_stage
+                if key.startswith("harrier") or key.startswith("bge")
+            ),
+            None,
+        )
+        sparse_key = next(
+            (key for key in ranked_indices_by_stage if key.startswith("sparse")), None
+        )
         stages = {
             "dense": self._stage_pubkeys(ranked_indices_by_stage.get(dense_key, [])),
             "sparse": self._stage_pubkeys(ranked_indices_by_stage.get(sparse_key, [])),
@@ -216,7 +245,9 @@ class RetrievalPipeline:
             query_texts=[query_text],
             cache_lang=cache_lang,
         )
-        return self.search_cached_query(query_idx=0, query_text=query_text, lang=cache_lang)
+        return self.search_cached_query(
+            query_idx=0, query_text=query_text, lang=cache_lang
+        )
 
     def unload_dense_models(self):
         for retriever_name, retriever in self.retrievers.items():

@@ -33,7 +33,9 @@ image = (
 
 app = modal.App("checkthat-evaluation-pipeline")
 EMBEDDING_CACHE_VOLUME_NAME = "checkthat-embedding-cache"
-embedding_cache = modal.Volume.from_name(EMBEDDING_CACHE_VOLUME_NAME, create_if_missing=True)
+embedding_cache = modal.Volume.from_name(
+    EMBEDDING_CACHE_VOLUME_NAME, create_if_missing=True
+)
 CACHE_MOUNT = "/cache/embeddings"
 logger = get_logger("clef_pipeline.modal")
 
@@ -86,7 +88,9 @@ def evaluate_pipeline(
     pipeline = build_pipeline_from_config(config)
 
     logger.info("Loading collection and building index...")
-    collection_dataset = load_dataset(CHECKTHAT_DATASET, "collection", split="collection")
+    collection_dataset = load_dataset(
+        CHECKTHAT_DATASET, "collection", split="collection"
+    )
     collection_documents = collection_dataset.to_list()
     pipeline.index_collection(
         collection_documents=collection_documents,
@@ -114,14 +118,18 @@ def evaluate_pipeline(
 
     logger.info("Running multilingual evaluation...")
     metrics = EvaluationMetrics(fusion_top_k=config.fusion_top_k)
-    submission_predictions = {lang: [] for lang in languages} if collect_submission else {}
+    submission_predictions = (
+        {lang: [] for lang in languages} if collect_submission else {}
+    )
 
     for lang in languages:
         tweets = lang_tweets[lang]
         print("\n==========================================")
         print(f"  STARTING EVALUATION FOR LANGUAGE: {lang.upper()}")
         print("==========================================")
-        for i, row in enumerate(tqdm(tweets, desc=f"Evaluating {lang.upper()} Queries")):
+        for i, row in enumerate(
+            tqdm(tweets, desc=f"Evaluating {lang.upper()} Queries")
+        ):
             result = pipeline.search_cached_query(
                 query_idx=i,
                 query_text=row["text"],
@@ -170,7 +178,9 @@ def evaluate_pipeline(
             f"  └─ Final Rerank:  MRR@5: {lang_metrics['final']['mrr5']:.4f} | R@5: {lang_metrics['final']['r5']:.4f}"
         )
 
-    print("\n================================================================================")
+    print(
+        "\n================================================================================"
+    )
     print(
         f"[GLOBAL AVERAGE] - {summary['total_labeled_queries']} Total Queries Across All Languages"
     )
@@ -186,7 +196,9 @@ def evaluate_pipeline(
     print(
         f"  └─ Overall Final:    MRR@5: {summary['global']['final']['mrr5']:.4f} | R@5: {summary['global']['final']['r5']:.4f}"
     )
-    print("================================================================================\n")
+    print(
+        "================================================================================\n"
+    )
     logger.info("Evaluation completed in %.2fs", timer.elapsed_seconds())
 
     submission_artifacts = None
