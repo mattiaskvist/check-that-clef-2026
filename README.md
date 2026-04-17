@@ -9,7 +9,10 @@ uv sync
 # Run evaluation pipeline
 uv run python -m clef_pipeline.main
 
-# Run Streamlit demo locally
+# Deploy Modal backend used by the Streamlit demo
+uv run modal deploy src/clef_demo/clef_demo/backend.py
+
+# Run Streamlit demo locally (uses the deployed Modal backend)
 uv run streamlit run src/clef_demo/clef_demo/streamlit_app.py
 
 # To add or remove dependencies, use the following commands:
@@ -37,8 +40,15 @@ uv run hf auth login
 # Evaluation pipeline
 uv run modal run -m clef_pipeline.main --split dev
 
-# Streamlit demo on Modal
+# Deploy Streamlit demo on Modal
+uv run modal deploy src/clef_demo/clef_demo/modal_app.py
+
+# Streamlit demo on Modal (live-reload dev mode)
 uv run modal serve -m clef_demo.modal_app
+
+# Stop deployed demo apps
+uv run modal stop-app clef-backend
+uv run modal stop-app checkthat-streamlit-demo
 ```
 
 ## Submission Guidelines
