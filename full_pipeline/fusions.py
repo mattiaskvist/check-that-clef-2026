@@ -91,78 +91,21 @@ class BaseMLFuser:
     def _predict(self, features: list[list[float]]) -> list[float]:
         raise NotImplementedError
 
-class LGBMFuser(BaseMLFuser):
-    def __init__(self, include_rrf: bool = True, lgb_params: dict | None = None):
-        super().__init__(include_rrf)
-        self.params = lgb_params or {
-            "objective": "binary",
-            "metric": "auc",
-            "learning_rate": 0.1,
-            "n_estimators": 100,
-            "num_leaves": 15,
-            "min_data_in_leaf": 10,
-            "verbose": -1,
-        }
-
-    def train(self, X: np.ndarray, y: np.ndarray, group: np.ndarray | list[int] = None):
-        import lightgbm as lgb
-        params = self.params.copy()
-        if "min_data_in_leaf" in params:
-            params["min_child_samples"] = params.pop("min_data_in_leaf")
-
-        clf = lgb.LGBMClassifier(**params)
-        try:
-            import pandas as pd
-            X_df = pd.DataFrame(X, columns=self.feature_names)
-            clf.fit(X_df, y)
-        except ImportError:
-            clf.fit(X, y, feature_name=self.feature_names)
-            
-        self.model = clf
-
-    def _predict(self, features: list[list[float]]) -> list[float]:
-        try:
-            import pandas as pd
-            X = pd.DataFrame(features, columns=self.feature_names)
-        except ImportError:
-            X = np.array(features)
-        probs = self.model.predict_proba(X)
-        return probs[:, 1].tolist()
-
-class XGBFuser(BaseMLFuser):
-    def train(self, X: np.ndarray, y: np.ndarray, group: np.ndarray | list[int] = None):
-        import xgboost as xgb
-        self.model = xgb.XGBClassifier(n_estimators=100, learning_rate=0.1, max_depth=4)
-        self.model.fit(np.array(X), np.array(y))
-
-    def _predict(self, features: list[list[float]]) -> list[float]:
-        import numpy as np
-        probs = self.model.predict_proba(np.array(features))
-        return probs[:, 1].tolist()
-
 class RandomForestFuser(BaseMLFuser):
+    def __init__(self, include_rrf: bool = True, rf_params: dict | None = None):
+        super().__init__(include_rrf)
+        self.rf_params = rf_params if rf_params is not None else {
+            "n_estimators": 100, "max_depth": 10, "random_state": 42, "n_jobs": -1
+        }
+        if "random_state" not in self.rf_params: self.rf_params["random_state"] = 42
+        if "n_jobs" not in self.rf_params: self.rf_params["n_jobs"] = -1
+
     def train(self, X: np.ndarray, y: np.ndarray, group: np.ndarray | list[int] = None):
         from sklearn.ensemble import RandomForestClassifier
-        self.model = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42, n_jobs=-1)
+        self.model = RandomForestClassifier(**self.rf_params)
         self.model.fit(np.array(X), np.array(y))
 
     def _predict(self, features: list[list[float]]) -> list[float]:
         import numpy as np
         probs = self.model.predict_proba(np.array(features))
-        return probs[:, 1].tolist()
-
-class LogisticRegressionFuser(BaseMLFuser):
-    def train(self, X: np.ndarray, y: np.ndarray, group: np.ndarray | list[int] = None):
-        from sklearn.linear_model import LogisticRegression
-        # Scale inputs just in case to help convergence (though we min-max scaled rank bounds are huge)
-        from sklearn.preprocessing import StandardScaler
-        self.scaler = StandardScaler()
-        X_scaled = self.scaler.fit_transform(np.array(X))
-        self.model = LogisticRegression(max_iter=1000)
-        self.model.fit(X_scaled, np.array(y))
-
-    def _predict(self, features: list[list[float]]) -> list[float]:
-        import numpy as np
-        X_scaled = self.scaler.transform(np.array(features))
-        probs = self.model.predict_proba(X_scaled)
         return probs[:, 1].tolist()

@@ -2,7 +2,7 @@ import modal
 
 from .retrievers import HarrierRetriever, SparseRetriever, BGEM3Retriever
 from .utils import CHECKTHAT_DATASET, FusionProcessor, MRR_at_5, Recall_at_k, article_to_text
-from .fusions import FeatureGenerator, LGBMFuser, XGBFuser, RandomForestFuser, LogisticRegressionFuser
+from .fusions import FeatureGenerator, RandomForestFuser
 
 # ==========================================
 # 1. MODAL ENVIRONMENT SETUP
@@ -22,8 +22,6 @@ image = (
         "Pillow",
         "torchvision",
         "deep-translator",
-        "lightgbm",
-        "xgboost",
         "scikit-learn",
         "country_converter",
         "geotext",
@@ -45,6 +43,7 @@ CACHE_MOUNT = "/cache/embeddings"
 @app.function(
     image=image,
     gpu="A100-40GB",
+    cpu=32.0,
     timeout=60 * 60 * 3,
     secrets=[modal.Secret.from_name("hf-token")],
     volumes={CACHE_MOUNT: embedding_cache},
@@ -159,14 +158,36 @@ def evaluate_pipeline():
     for lang in languages:
         splits[lang] = list(kf.split(range(len(lang_tweets[lang]))))
 
-    model_configs = {
-        "LGBM (PerLang)":       {"fuser_class": LGBMFuser,             "global": False, "include_rrf": True},
-        "LGBM (Global)":        {"fuser_class": LGBMFuser,             "global": True,  "include_rrf": True},
-        "LGBM (Global, NoRRF)": {"fuser_class": LGBMFuser,             "global": True,  "include_rrf": False},
-        "XGBoost (PerLang)":    {"fuser_class": XGBFuser,              "global": False, "include_rrf": True},
-        "RF (PerLang)":         {"fuser_class": RandomForestFuser,     "global": False, "include_rrf": True},
-        "LogReg (PerLang)":     {"fuser_class": LogisticRegressionFuser, "global": False, "include_rrf": True},
-    }
+    model_configs = {}
+    
+    def add_config(name, est=100, depth=10, split=2, inc_rrf=True, is_global=False):
+        model_configs[name] = {
+            "fuser_class": RandomForestFuser,
+            "global": is_global,
+            "include_rrf": inc_rrf,
+            "rf_params": {'n_estimators': est, 'max_depth': depth, 'min_samples_split': split}
+        }
+        
+    # 1. Base Strategy
+    add_config("RF [BASE] (est=100, d=10, s=2, RRF, PerLang)")
+    
+    # 2-3. Vary Trees
+    add_config("RF [VARY EST] (est=50)", est=50)
+    add_config("RF [VARY EST] (est=200)", est=200)
+    
+    # 4-5. Vary Depth
+    add_config("RF [VARY DEPTH] (d=5)", depth=5)
+    add_config("RF [VARY DEPTH] (d=15)", depth=15)
+    
+    # 6-7. Vary Node Split threshold
+    add_config("RF [VARY SPLIT] (s=5)", split=5)
+    add_config("RF [VARY SPLIT] (s=10)", split=10)
+    
+    # 8. Ablate External Feature
+    add_config("RF [VARY FEAT] (No RRF)", inc_rrf=False)
+    
+    # 9. Ablate Language Consolidation
+    add_config("RF [VARY SCOPE] (Global)", is_global=True)
 
     # Store 5 fold results
     results = {
@@ -229,7 +250,7 @@ def evaluate_pipeline():
             trained_models = {}
 
             if cfg["global"]:
-                fuser = cfg["fuser_class"](include_rrf=inc_rrf)
+                fuser = cfg["fuser_class"](include_rrf=inc_rrf, rf_params=cfg.get("rf_params", None))
                 GX, Gy, Ggroup = [], [], []
                 for lang in languages:
                     train_idx, _ = splits[lang][fold]
@@ -248,7 +269,7 @@ def evaluate_pipeline():
                     trained_models[lang] = fuser
             else:
                 for lang in languages:
-                    fuser = cfg["fuser_class"](include_rrf=inc_rrf)
+                    fuser = cfg["fuser_class"](include_rrf=inc_rrf, rf_params=cfg.get("rf_params", None))
                     train_idx, _ = splits[lang][fold]
                     LX, Ly, Lgroup = [], [], []
                     for i in train_idx:
@@ -308,7 +329,7 @@ def evaluate_pipeline():
             r30_mean, r30_std = np.mean(results[model_name][lang]["r30"]), np.std(results[model_name][lang]["r30"])
             r50_mean, r50_std = np.mean(results[model_name][lang]["r50"]), np.std(results[model_name][lang]["r50"])
             prefix = "├─" if model_name != sorted(model_configs.keys())[-1] else "└─"
-            print(f"  {prefix} {model_name:<22} R@10: {r10_mean:.4f} ± {r10_std:.4f}  |  R@30: {r30_mean:.4f} ± {r30_std:.4f}  |  R@50: {r50_mean:.4f} ± {r50_std:.4f}")
+            print(f"  {prefix} {model_name:<44} R@10: {r10_mean:.4f} ± {r10_std:.4f}  |  R@30: {r30_mean:.4f} ± {r30_std:.4f}  |  R@50: {r50_mean:.4f} ± {r50_std:.4f}")
 
     print("\n" + "=" * 60)
     total_q = sum(len(lang_tweets[lang]) for lang in languages)
@@ -338,7 +359,7 @@ def evaluate_pipeline():
         g_r50 = [np.average([results[model_name][l]["r50"][f] for l in languages], weights=[len(splits[l][f][1]) for l in languages]) for f in range(5)]
         
         prefix = "├─" if model_name != sorted(model_configs.keys())[-1] else "└─"
-        print(f"  {prefix} {model_name:<22} R@10: {np.mean(g_r10):.4f} ± {np.std(g_r10):.4f}  |  R@30: {np.mean(g_r30):.4f} ± {np.std(g_r30):.4f}  |  R@50: {np.mean(g_r50):.4f} ± {np.std(g_r50):.4f}")
+        print(f"  {prefix} {model_name:<44} R@10: {np.mean(g_r10):.4f} ± {np.std(g_r10):.4f}  |  R@30: {np.mean(g_r30):.4f} ± {np.std(g_r30):.4f}  |  R@50: {np.mean(g_r50):.4f} ± {np.std(g_r50):.4f}")
 
     print("==================================================\n")
 
