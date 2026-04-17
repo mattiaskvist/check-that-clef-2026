@@ -1,5 +1,6 @@
 import modal
 
+from .fusions import RRFFuser, RandomForestFuser
 from .rerankers import NemotronReranker
 from .retrievers import HarrierRetriever, SparseRetriever
 from .submission import (
@@ -11,7 +12,6 @@ from .submission import (
 )
 from .utils import (
     CHECKTHAT_DATASET,
-    FusionProcessor,
     MRR_at_5,
     recall_at_K,
 )
@@ -34,6 +34,7 @@ image = (
         "Pillow",
         "torchvision",
         "deep-translator",
+        "scikit-learn",
     )
 )
 
@@ -63,6 +64,9 @@ def evaluate_pipeline(
     split: str = "dev",
     collect_submission: bool = False,
     submission_volume_subdir: str = "submissions",
+    fusion_method: str = "rrf",
+    force_retrain_fusion: bool = False,
+    global_fusion_model: bool = False,
 ):
     from datetime import datetime, timezone
 
@@ -75,11 +79,16 @@ def evaluate_pipeline(
     dense_retriever = HarrierRetriever()
     sparse_retriever = SparseRetriever()
     reranker = NemotronReranker()
-    fusion = FusionProcessor()
     FUSION_TOP_K = 30  # Number of candidates to fuse and rerank
     SPARSE_CACHE_TOP_K = (
         2000  # Keep a deep sparse candidate pool for fast rerank/fusion iteration
     )
+
+    # --- INITIALIZE FUSER ---
+    if fusion_method == "random_forest":
+        fuser = RandomForestFuser(global_model=global_fusion_model)
+    else:
+        fuser = RRFFuser()
 
     # --- LOAD & INDEX COLLECTION ---
     collection_dataset = load_dataset(
@@ -124,6 +133,57 @@ def evaluate_pipeline(
         )
         embedding_cache.commit()
 
+    # --- 3b. RF FUSION TRAINING (if applicable) ---
+    if isinstance(fuser, RandomForestFuser):
+        sparse_config = {
+            "k1": sparse_retriever.bm25_k1,
+            "b": sparse_retriever.bm25_b,
+            "stemmer": "lancaster",
+        }
+        loaded = False
+        if not force_retrain_fusion:
+            loaded = fuser.load(
+                cache_dir=CACHE_MOUNT,
+                dense_model_name=dense_retriever.model_name,
+                sparse_config=sparse_config,
+                train_split="train",
+            )
+        if not loaded:
+            # Load and pre-encode train queries
+            train_tweets_by_lang = {}
+            for lang in languages:
+                train_tweets = list(
+                    load_dataset(CHECKTHAT_DATASET, lang)["train"]
+                )
+                train_tweets_by_lang[lang] = train_tweets
+                train_query_texts = [row["text"] for row in train_tweets]
+                dense_retriever.index_queries(
+                    train_query_texts,
+                    cache_dir=CACHE_MOUNT,
+                    cache_name=f"queries_train_{lang}",
+                    force_recompute=force_recompute_dense_queries,
+                )
+                sparse_retriever.index_queries(
+                    train_query_texts,
+                    lang=lang,
+                    cache_dir=CACHE_MOUNT,
+                    cache_name=f"sparse_queries_train_{lang}",
+                    top_k=SPARSE_CACHE_TOP_K,
+                    force_recompute=force_recompute_sparse_cache,
+                )
+                embedding_cache.commit()
+
+            fuser.train(
+                dense_retriever=dense_retriever,
+                sparse_retriever=sparse_retriever,
+                train_tweets_by_lang=train_tweets_by_lang,
+                article_pubkeys=article_pubkeys,
+                dense_model_name=dense_retriever.model_name,
+                sparse_config=sparse_config,
+            )
+            fuser.save(cache_dir=CACHE_MOUNT)
+            embedding_cache.commit()
+
     dense_retriever.unload_model()
 
     # --- 4. EVALUATION LOOP ---
@@ -166,10 +226,20 @@ def evaluate_pipeline(
             true_pubkey = row.get("pubkey")
 
             # Step A: Independent Retrieval
-            dense_ranks = dense_retriever.search(i, cache_name=f"queries_{lang}")
-            sparse_ranks = sparse_retriever.search(
-                i, cache_name=f"sparse_queries_{lang}"
-            )
+            if isinstance(fuser, RandomForestFuser):
+                dense_ranks, dense_scores = dense_retriever.search_with_scores(
+                    i, cache_name=f"queries_{lang}"
+                )
+                sparse_ranks, sparse_scores = sparse_retriever.search_with_scores(
+                    i, cache_name=f"sparse_queries_{lang}"
+                )
+            else:
+                dense_ranks = dense_retriever.search(i, cache_name=f"queries_{lang}")
+                sparse_ranks = sparse_retriever.search(
+                    i, cache_name=f"sparse_queries_{lang}"
+                )
+                dense_scores = None
+                sparse_scores = None
 
             dense_preds = [article_pubkeys[doc_id] for doc_id in dense_ranks]
             sparse_preds = [article_pubkeys[doc_id] for doc_id in sparse_ranks]
@@ -206,8 +276,13 @@ def evaluate_pipeline(
                 )
 
             # Step B: Fusion
-            fused_candidates = fusion.reciprocal_rank_fusion(
-                [dense_ranks, sparse_ranks], top_k=FUSION_TOP_K
+            fused_candidates = fuser.fuse(
+                ranked_lists=[dense_ranks, sparse_ranks],
+                scores_lists=(
+                    [dense_scores, sparse_scores] if dense_scores is not None else None
+                ),
+                top_k=FUSION_TOP_K,
+                lang=lang,
             )
             rrf_preds = [article_pubkeys[doc_id] for doc_id in fused_candidates]
 
@@ -362,6 +437,9 @@ def main(
     export_submission_tsv: bool = False,
     submission_volume_subdir: str = "submissions",
     submission_download_dir: str = "submissions",
+    fusion_method: str = "rrf",
+    force_retrain_fusion: bool = False,
+    global_fusion_model: bool = False,
 ):
     run_output = evaluate_pipeline.remote(
         force_recompute_sparse_cache=force_recompute_sparse_cache,
@@ -370,6 +448,9 @@ def main(
         split=split,
         collect_submission=export_submission_tsv,
         submission_volume_subdir=submission_volume_subdir,
+        fusion_method=fusion_method,
+        force_retrain_fusion=force_retrain_fusion,
+        global_fusion_model=global_fusion_model,
     )
 
     if export_submission_tsv:

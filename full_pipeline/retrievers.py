@@ -275,6 +275,31 @@ class HarrierRetriever(BaseRetriever):
         self.torch.cuda.empty_cache()
         print("Embedding model unloaded, GPU memory freed.")
 
+    def search_with_scores(
+        self, query_idx: int, cache_name: str | None = None
+    ) -> tuple[list[int], list[float]]:
+        """Return (ranked_doc_ids, scores) for a cached query.
+
+        Mirrors SparseRetriever.search_with_scores(). The scores list is
+        indexed by doc_id (not by rank), matching the dense score array layout
+        needed by FeatureGenerator.
+        """
+        if cache_name is None:
+            query_embeddings = self.query_embeddings
+            if query_embeddings is None:
+                raise ValueError(
+                    "No query embeddings loaded. Call index_queries(...) first."
+                )
+        else:
+            query_sets = getattr(self, "_query_embeddings_by_name", {})
+            if cache_name not in query_sets:
+                raise KeyError(f"No query cache named '{cache_name}' is available.")
+            query_embeddings = query_sets[cache_name]
+
+        scores = self.util.cos_sim(query_embeddings[query_idx], self.embeddings)[0]
+        ranked = self.torch.argsort(scores, descending=True).tolist()
+        return ranked, scores.cpu().numpy().tolist()
+
     def search(self, query_idx: int, cache_name: str | None = None) -> list[int]:
         if cache_name is None:
             query_embeddings = self.query_embeddings
