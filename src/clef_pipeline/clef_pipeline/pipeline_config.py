@@ -29,6 +29,7 @@ class PipelineConfig:
     retrievers: list[RetrieverConfig]
     reranker: RerankerConfig
     use_fusion: bool = True
+    fusion_method: str = "rrf"
     fusion_top_k: int = 30
     sparse_cache_top_k: int = 2000
     final_top_k: int = 5
@@ -38,7 +39,9 @@ class PipelineConfig:
         return [retriever for retriever in self.retrievers if retriever.enabled]
 
 
-def build_pipeline_config(profile: str = "demo") -> PipelineConfig:
+def build_pipeline_config(
+    profile: str = "demo", fusion_method: str = "rrf"
+) -> PipelineConfig:
     """Build a predefined pipeline configuration profile.
 
     Args:
@@ -50,6 +53,12 @@ def build_pipeline_config(profile: str = "demo") -> PipelineConfig:
     Raises:
         ValueError: If ``profile`` is unknown.
     """
+    normalized_fusion_method = fusion_method.strip().lower()
+    if normalized_fusion_method not in {"rrf", "random_forest"}:
+        raise ValueError(
+            f"Unknown fusion method: {fusion_method}. Use 'rrf' or 'random_forest'."
+        )
+
     if profile == "demo":
         return PipelineConfig(
             retrievers=[
@@ -58,6 +67,7 @@ def build_pipeline_config(profile: str = "demo") -> PipelineConfig:
             ],
             reranker=RerankerConfig(name="nemotron", enabled=True),
             use_fusion=True,
+            fusion_method=normalized_fusion_method,
             fusion_top_k=30,
             sparse_cache_top_k=2000,
             final_top_k=5,
@@ -71,6 +81,7 @@ def build_pipeline_config(profile: str = "demo") -> PipelineConfig:
             ],
             reranker=RerankerConfig(name="nemotron", enabled=True),
             use_fusion=True,
+            fusion_method=normalized_fusion_method,
             fusion_top_k=30,
             sparse_cache_top_k=2000,
             final_top_k=5,
@@ -84,6 +95,7 @@ def build_pipeline_config(profile: str = "demo") -> PipelineConfig:
             ],
             reranker=RerankerConfig(name=None, enabled=False),
             use_fusion=True,
+            fusion_method=normalized_fusion_method,
             fusion_top_k=30,
             sparse_cache_top_k=2000,
             final_top_k=5,

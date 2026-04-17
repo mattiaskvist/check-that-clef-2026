@@ -8,6 +8,7 @@ __all__ = [
     "interfaces",
     "pipeline_config",
     "pipeline",
+    "fusions",
     "registry",
     "logging_utils",
     "metrics",

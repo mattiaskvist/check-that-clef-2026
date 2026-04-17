@@ -2,6 +2,7 @@
 
 import modal
 
+from .fusions import RandomForestFuser
 from .logging_utils import StageTimer, get_logger
 from .metrics import EvaluationMetrics
 from .pipeline_config import build_pipeline_config
@@ -42,13 +43,16 @@ CACHE_MOUNT = "/cache/embeddings"
 logger = get_logger("clef_pipeline.modal")
 
 
-def _print_language_summary(lang: str, data: dict[str, object], fusion_top_k: int):
+def _print_language_summary(
+    lang: str, data: dict[str, object], fusion_top_k: int, fusion_label: str
+):
     """Print a formatted per-language metric summary to stdout.
 
     Args:
         lang: Language code.
         data: Summary payload produced by ``EvaluationMetrics.summary``.
-        fusion_top_k: Fusion cutoff used for RRF recall display.
+        fusion_top_k: Fusion cutoff used for fusion recall display.
+        fusion_label: Label used when printing fusion-stage metrics.
     """
     metrics = data["metrics"]
     if metrics is None:
@@ -64,7 +68,7 @@ def _print_language_summary(lang: str, data: dict[str, object], fusion_top_k: in
         f"Sparse Only:  MRR@5: {metrics['sparse']['mrr5']:.4f} | R@5: {metrics['sparse']['r5']:.4f} | R@10: {metrics['sparse']['r10']:.4f} | R@30: {metrics['sparse']['r30']:.4f} | R@50: {metrics['sparse']['r50']:.4f}"
     )
     print(
-        f"RRF Output:   MRR@5: {metrics['rrf']['mrr5']:.4f} | R@{fusion_top_k}: {metrics['rrf'][f'r{fusion_top_k}']:.4f}"
+        f"{fusion_label} Output:   MRR@5: {metrics['rrf']['mrr5']:.4f} | R@{fusion_top_k}: {metrics['rrf'][f'r{fusion_top_k}']:.4f}"
     )
     print(
         f"Final Rerank: MRR@5: {metrics['final']['mrr5']:.4f} | R@5: {metrics['final']['r5']:.4f}"
@@ -85,6 +89,9 @@ def evaluate_pipeline(
     split: str = "dev",
     collect_submission: bool = False,
     submission_volume_subdir: str = "submissions",
+    fusion_method: str = "rrf",
+    force_retrain_fusion: bool = False,
+    global_fusion_model: bool = False,
 ):
     """Run the full retrieval evaluation workflow on Modal.
 
@@ -95,6 +102,9 @@ def evaluate_pipeline(
         split: Dataset split to evaluate (``train``, ``dev``, or ``test``).
         collect_submission: Whether to write submission TSV files.
         submission_volume_subdir: Subdirectory under cache volume for submissions.
+        fusion_method: Fusion strategy (``rrf`` or ``random_forest``).
+        force_retrain_fusion: Force retraining learned fusion model instead of loading cache.
+        global_fusion_model: Train one fusion model for all languages.
 
     Returns:
         Global language results and optional submission artifact metadata.
@@ -106,8 +116,10 @@ def evaluate_pipeline(
 
     timer = StageTimer()
     split = normalize_split(split)
-    config = build_pipeline_config("evaluation")
+    config = build_pipeline_config("evaluation", fusion_method=fusion_method)
     pipeline = build_pipeline_from_config(config)
+    if config.fusion_method == "random_forest":
+        pipeline.fuser = RandomForestFuser(global_model=global_fusion_model)
 
     logger.info("Loading collection and building index...")
     collection_dataset = load_dataset(
@@ -136,9 +148,68 @@ def evaluate_pipeline(
         )
         embedding_cache.commit()
 
+    if config.fusion_method == "random_forest":
+        dense_retriever, sparse_retriever = pipeline.get_fusion_retrievers()
+        if not isinstance(pipeline.fuser, RandomForestFuser):
+            raise RuntimeError("Expected RandomForestFuser for random_forest mode.")
+
+        sparse_config = {
+            "k1": getattr(sparse_retriever, "bm25_k1", None),
+            "b": getattr(sparse_retriever, "bm25_b", None),
+            "stemmer": "lancaster",
+        }
+        dense_model_name = getattr(
+            dense_retriever, "model_name", dense_retriever.__class__.__name__
+        )
+
+        loaded = False
+        if not force_retrain_fusion:
+            loaded = pipeline.fuser.load(
+                cache_dir=CACHE_MOUNT,
+                dense_model_name=dense_model_name,
+                sparse_config=sparse_config,
+                train_split="train",
+            )
+
+        if not loaded:
+            train_tweets_by_lang: dict[str, list[dict]] = {}
+            for lang in languages:
+                train_tweets = list(load_dataset(CHECKTHAT_DATASET, lang)["train"])
+                train_tweets_by_lang[lang] = train_tweets
+                train_query_texts = [row["text"] for row in train_tweets]
+
+                dense_retriever.index_queries(
+                    train_query_texts,
+                    cache_dir=CACHE_MOUNT,
+                    cache_name=f"queries_train_{lang}",
+                    force_recompute=force_recompute_dense_queries,
+                )
+                sparse_retriever.index_queries(
+                    train_query_texts,
+                    lang=lang,
+                    cache_dir=CACHE_MOUNT,
+                    cache_name=f"sparse_queries_train_{lang}",
+                    top_k=config.sparse_cache_top_k,
+                    force_recompute=force_recompute_sparse_cache,
+                )
+                embedding_cache.commit()
+
+            pipeline.fuser.train(
+                dense_retriever=dense_retriever,
+                sparse_retriever=sparse_retriever,
+                train_tweets_by_lang=train_tweets_by_lang,
+                article_pubkeys=pipeline.article_pubkeys,
+                dense_model_name=dense_model_name,
+                sparse_config=sparse_config,
+                train_split="train",
+            )
+            pipeline.fuser.save(cache_dir=CACHE_MOUNT)
+            embedding_cache.commit()
+
     pipeline.unload_dense_models()
 
     logger.info("Running multilingual evaluation...")
+    fusion_label = "RF Fusion" if config.fusion_method == "random_forest" else "RRF"
     metrics = EvaluationMetrics(fusion_top_k=config.fusion_top_k)
     submission_predictions = (
         {lang: [] for lang in languages} if collect_submission else {}
@@ -175,7 +246,9 @@ def evaluate_pipeline(
     summary = metrics.summary()
     global_results = summary["languages"]
     for lang in languages:
-        _print_language_summary(lang, global_results[lang], config.fusion_top_k)
+        _print_language_summary(
+            lang, global_results[lang], config.fusion_top_k, fusion_label
+        )
 
     print("\n\n" + "*" * 80)
     print("*" + " FINAL MULTILINGUAL EVALUATION SUMMARY ".center(78) + "*")
@@ -194,7 +267,7 @@ def evaluate_pipeline(
             f"  ├─ Sparse Only:   MRR@5: {lang_metrics['sparse']['mrr5']:.4f} | R@5: {lang_metrics['sparse']['r5']:.4f} | R@10: {lang_metrics['sparse']['r10']:.4f} | R@30: {lang_metrics['sparse']['r30']:.4f} | R@50: {lang_metrics['sparse']['r50']:.4f}"
         )
         print(
-            f"  ├─ RRF Output:    MRR@5: {lang_metrics['rrf']['mrr5']:.4f} | R@{config.fusion_top_k}: {lang_metrics['rrf'][f'r{config.fusion_top_k}']:.4f}"
+            f"  ├─ {fusion_label}:    MRR@5: {lang_metrics['rrf']['mrr5']:.4f} | R@{config.fusion_top_k}: {lang_metrics['rrf'][f'r{config.fusion_top_k}']:.4f}"
         )
         print(
             f"  └─ Final Rerank:  MRR@5: {lang_metrics['final']['mrr5']:.4f} | R@5: {lang_metrics['final']['r5']:.4f}"
@@ -213,7 +286,7 @@ def evaluate_pipeline(
         f"  ├─ Overall Sparse:   MRR@5: {summary['global']['sparse']['mrr5']:.4f} | R@5: {summary['global']['sparse']['r5']:.4f} | R@10: {summary['global']['sparse']['r10']:.4f} | R@30: {summary['global']['sparse']['r30']:.4f} | R@50: {summary['global']['sparse']['r50']:.4f}"
     )
     print(
-        f"  ├─ Overall RRF:      MRR@5: {summary['global']['rrf']['mrr5']:.4f} | R@{config.fusion_top_k}: {summary['global']['rrf'][f'r{config.fusion_top_k}']:.4f}"
+        f"  ├─ Overall {fusion_label}:      MRR@5: {summary['global']['rrf']['mrr5']:.4f} | R@{config.fusion_top_k}: {summary['global']['rrf'][f'r{config.fusion_top_k}']:.4f}"
     )
     print(
         f"  └─ Overall Final:    MRR@5: {summary['global']['final']['mrr5']:.4f} | R@5: {summary['global']['final']['r5']:.4f}"
@@ -257,6 +330,9 @@ def main(
     export_submission_tsv: bool = False,
     submission_volume_subdir: str = "submissions",
     submission_download_dir: str = "submissions",
+    fusion_method: str = "rrf",
+    force_retrain_fusion: bool = False,
+    global_fusion_model: bool = False,
 ):
     """Local CLI entrypoint that dispatches Modal evaluation and export.
 
@@ -276,6 +352,9 @@ def main(
         split=split,
         collect_submission=export_submission_tsv,
         submission_volume_subdir=submission_volume_subdir,
+        fusion_method=fusion_method,
+        force_retrain_fusion=force_retrain_fusion,
+        global_fusion_model=global_fusion_model,
     )
 
     if export_submission_tsv:
