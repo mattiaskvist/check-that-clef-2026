@@ -1,3 +1,5 @@
+"""Dense and sparse retriever implementations for pipeline stages."""
+
 import re
 
 import numpy as np
@@ -16,7 +18,15 @@ from .utils import STOPWORDS
 
 
 class BGEM3Retriever(BaseRetriever):
+    """Dense retriever using SentenceTransformer BGE-M3 embeddings."""
+
     def __init__(self, model_name: str = "BAAI/bge-m3", lora_id: str = None):
+        """Load dense retriever model and optional LoRA adapters.
+
+        Args:
+            model_name: Base embedding model id.
+            lora_id: Optional LoRA adapter id to inject into the base model.
+        """
         import os
 
         import torch
@@ -42,6 +52,7 @@ class BGEM3Retriever(BaseRetriever):
             self.model = self.model.to("cuda")
 
     def _cache_key(self) -> str:
+        """Build cache namespace identifier for model and adapter settings."""
         key = self.model_name.replace("/", "--")
         if self.lora_id:
             key += f"+{self.lora_id.replace('/', '--')}"
@@ -49,6 +60,7 @@ class BGEM3Retriever(BaseRetriever):
 
     @staticmethod
     def _texts_fingerprint(texts: list[str]) -> str:
+        """Compute a deterministic short fingerprint for text collections."""
         import hashlib
 
         digest = hashlib.sha256()
@@ -66,6 +78,18 @@ class BGEM3Retriever(BaseRetriever):
         label: str,
         force_recompute: bool = False,
     ):
+        """Load cached embeddings or encode and persist them.
+
+        Args:
+            texts: Input texts to encode.
+            encode_fn: Callable used for model encoding.
+            cache_path: Optional on-disk cache location.
+            label: Human-readable label for logging.
+            force_recompute: Bypass existing cache when true.
+
+        Returns:
+            Embedding tensor loaded from cache or produced by encoding.
+        """
         import os
 
         if cache_path and os.path.exists(cache_path) and not force_recompute:
@@ -92,6 +116,16 @@ class BGEM3Retriever(BaseRetriever):
     def _cache_path(
         self, cache_dir: str | None, filename: str, texts: list[str] | None = None
     ) -> str | None:
+        """Build cache file path for embeddings.
+
+        Args:
+            cache_dir: Root cache directory or ``None`` to disable caching.
+            filename: Base cache file name.
+            texts: Optional source texts for fingerprinted naming.
+
+        Returns:
+            Cache path or ``None`` when caching is disabled.
+        """
         import os
 
         if cache_dir:
@@ -108,6 +142,13 @@ class BGEM3Retriever(BaseRetriever):
         cache_dir: str | None = None,
         force_recompute: bool = False,
     ):
+        """Index document texts by computing dense document embeddings.
+
+        Args:
+            corpus: Document texts.
+            cache_dir: Optional cache directory for embedding tensors.
+            force_recompute: Recompute embeddings even if cache exists.
+        """
         path = self._cache_path(cache_dir, "documents.pt", corpus)
         self.embeddings = self._load_or_encode(
             corpus,
@@ -124,6 +165,14 @@ class BGEM3Retriever(BaseRetriever):
         cache_name: str = "queries",
         force_recompute: bool = False,
     ):
+        """Index query texts and store embeddings by cache name.
+
+        Args:
+            queries: Query texts to encode.
+            cache_dir: Optional cache directory for embedding tensors.
+            cache_name: Query embedding cache namespace.
+            force_recompute: Recompute embeddings even if cache exists.
+        """
         path = self._cache_path(cache_dir, f"{cache_name}.pt", queries)
         query_embeddings = self._load_or_encode(
             queries,
@@ -136,6 +185,19 @@ class BGEM3Retriever(BaseRetriever):
         self._query_embeddings_by_name[cache_name] = query_embeddings
 
     def search(self, query_idx: int, cache_name: str | None = None) -> list[int]:
+        """Return dense ranking for one indexed query.
+
+        Args:
+            query_idx: Index of the query embedding.
+            cache_name: Optional query cache name to read from.
+
+        Returns:
+            Ranked document indices.
+
+        Raises:
+            ValueError: If default query embeddings are unavailable.
+            KeyError: If the requested cache name is not indexed.
+        """
         if cache_name is None:
             query_embeddings = self.query_embeddings
             if query_embeddings is None:
@@ -152,6 +214,8 @@ class BGEM3Retriever(BaseRetriever):
 
 
 class HarrierRetriever(BaseRetriever):
+    """Dense retriever using Microsoft Harrier embedding models."""
+
     DEFAULT_QUERY_PROMPT = (
         "Instruct: Retrieve the implicitly referenced scientific article\nQuery: "
     )
@@ -159,6 +223,12 @@ class HarrierRetriever(BaseRetriever):
     def __init__(
         self, model_name: str = "microsoft/harrier-oss-v1-27b", batch_size: int = 2
     ):
+        """Load Harrier embedding model and runtime settings.
+
+        Args:
+            model_name: Harrier model id.
+            batch_size: Embedding batch size for encode calls.
+        """
         import torch
         from sentence_transformers import SentenceTransformer, util
 
@@ -176,10 +246,12 @@ class HarrierRetriever(BaseRetriever):
         )
 
     def _cache_key(self) -> str:
+        """Build cache namespace identifier for model settings."""
         return self.model_name.replace("/", "--")
 
     @staticmethod
     def _texts_fingerprint(texts: list[str]) -> str:
+        """Compute a deterministic short fingerprint for text collections."""
         import hashlib
 
         digest = hashlib.sha256()
@@ -192,6 +264,7 @@ class HarrierRetriever(BaseRetriever):
     def _cache_path(
         self, cache_dir: str | None, filename: str, texts: list[str] | None = None
     ) -> str | None:
+        """Build cache file path for embeddings."""
         import os
 
         if cache_dir:
@@ -210,6 +283,18 @@ class HarrierRetriever(BaseRetriever):
         force_recompute: bool = False,
         **encode_kwargs,
     ):
+        """Load cached embeddings or encode and persist them.
+
+        Args:
+            texts: Input texts to encode.
+            cache_path: Optional on-disk cache location.
+            label: Human-readable label for logging.
+            force_recompute: Bypass existing cache when true.
+            **encode_kwargs: Extra kwargs passed to ``SentenceTransformer.encode``.
+
+        Returns:
+            Embedding tensor loaded from cache or produced by encoding.
+        """
         import os
 
         if cache_path and os.path.exists(cache_path) and not force_recompute:
@@ -244,6 +329,7 @@ class HarrierRetriever(BaseRetriever):
         cache_dir: str | None = None,
         force_recompute: bool = False,
     ):
+        """Index document texts by computing dense document embeddings."""
         path = self._cache_path(cache_dir, "documents.pt", corpus)
         self.embeddings = self._load_or_encode(
             corpus,
@@ -259,6 +345,7 @@ class HarrierRetriever(BaseRetriever):
         cache_name: str = "queries",
         force_recompute: bool = False,
     ):
+        """Index query texts and store embeddings by cache name."""
         path = self._cache_path(cache_dir, f"{cache_name}.pt", queries)
         query_embeddings = self._load_or_encode(
             queries,
@@ -280,6 +367,19 @@ class HarrierRetriever(BaseRetriever):
         print("Embedding model unloaded, GPU memory freed.")
 
     def search(self, query_idx: int, cache_name: str | None = None) -> list[int]:
+        """Return dense ranking for one indexed query.
+
+        Args:
+            query_idx: Index of the query embedding.
+            cache_name: Optional query cache name to read from.
+
+        Returns:
+            Ranked document indices.
+
+        Raises:
+            ValueError: If default query embeddings are unavailable.
+            KeyError: If the requested cache name is not indexed.
+        """
         if cache_name is None:
             query_embeddings = self.query_embeddings
             if query_embeddings is None:
@@ -300,6 +400,7 @@ class SparseRetriever(BaseRetriever):
     """A retriever that performs sparse retrieval."""
 
     def __init__(self):
+        """Initialize sparse retriever parameters and caches."""
         self.bm25_model = None
         self.bm25_k1 = 2.5
         self.bm25_b = 0.85
@@ -309,6 +410,7 @@ class SparseRetriever(BaseRetriever):
         self._query_scores_by_name = {}
 
     def _cache_key(self) -> str:
+        """Build cache namespace identifier for sparse retrieval settings."""
         return (
             f"bm25plus-k1_{self.bm25_k1:.2f}-b_{self.bm25_b:.2f}"
             "-stem_lancaster-bigrams_1-translate_v1"
@@ -316,6 +418,7 @@ class SparseRetriever(BaseRetriever):
 
     @staticmethod
     def _texts_fingerprint(texts: list[str]) -> str:
+        """Compute a deterministic short fingerprint for text collections."""
         import hashlib
 
         digest = hashlib.sha256()
@@ -333,6 +436,21 @@ class SparseRetriever(BaseRetriever):
         lang: str,
         top_k: int | None,
     ) -> str | None:
+        """Build cache path for sparse query rankings and scores.
+
+        Args:
+            cache_dir: Root cache directory.
+            cache_name: Query cache namespace.
+            queries: Query texts.
+            lang: Language key used for cache identity.
+            top_k: Cached cutoff depth.
+
+        Returns:
+            Cache path or ``None`` if caching is disabled.
+
+        Raises:
+            ValueError: If called before the retriever has been indexed.
+        """
         import os
 
         if cache_dir is None:
@@ -352,6 +470,19 @@ class SparseRetriever(BaseRetriever):
     def _score_query(
         self, query: str, lang: str = "auto", top_k: int | None = None
     ) -> tuple[np.ndarray, np.ndarray]:
+        """Score one query with BM25+ and return ranked ids and scores.
+
+        Args:
+            query: Query text.
+            lang: Query language code or ``auto`` for auto-detection.
+            top_k: Optional top-k truncation.
+
+        Returns:
+            Tuple of ranked document indices and aligned scores.
+
+        Raises:
+            ValueError: If retriever was not indexed.
+        """
         if self.bm25_model is None:
             raise ValueError("SparseRetriever is not indexed. Call index(...) first.")
 
@@ -369,6 +500,19 @@ class SparseRetriever(BaseRetriever):
     def _get_cached_query(
         self, query_idx: int, cache_name: str
     ) -> tuple[np.ndarray, np.ndarray]:
+        """Fetch ranked ids and scores for one cached query.
+
+        Args:
+            query_idx: Query position in cache arrays.
+            cache_name: Cached query namespace.
+
+        Returns:
+            Ranked ids and scores for the selected query.
+
+        Raises:
+            KeyError: If cache name does not exist.
+            IndexError: If query index is out of range.
+        """
         if cache_name not in self._query_rankings_by_name:
             raise KeyError(f"No sparse query cache named '{cache_name}' is available.")
 
@@ -397,6 +541,11 @@ class SparseRetriever(BaseRetriever):
         return unigrams
 
     def index(self, collection: list[dict]):
+        """Index a document collection into a BM25+ model.
+
+        Args:
+            collection: Document dictionaries with article metadata.
+        """
         corpus = [self.document_to_text(doc) for doc in collection]
         tokenized_corpus = [self.tokenize(text) for text in corpus]
         self.bm25_model = BM25Plus(tokenized_corpus, k1=self.bm25_k1, b=self.bm25_b)
@@ -413,6 +562,19 @@ class SparseRetriever(BaseRetriever):
         top_k: int | None = 2000,
         force_recompute: bool = False,
     ):
+        """Precompute sparse rankings for a query set and optionally cache them.
+
+        Args:
+            queries: Query texts to score.
+            lang: Query language code or ``auto``.
+            cache_dir: Optional cache directory.
+            cache_name: Cache namespace for query rankings.
+            top_k: Maximum number of ranked documents per query.
+            force_recompute: Recompute even if cached arrays exist.
+
+        Raises:
+            ValueError: If retriever is not indexed or ``top_k`` is invalid.
+        """
         import os
 
         if self.bm25_model is None:
@@ -514,6 +676,19 @@ class SparseRetriever(BaseRetriever):
         lang: str = "auto",
         cache_name: str | None = None,
     ) -> tuple[list[int], list[float]]:
+        """Return sparse-ranked document ids and scores for a query.
+
+        Args:
+            query: Query text, or query index when ``cache_name`` is provided.
+            lang: Query language code or ``auto``.
+            cache_name: Optional cache namespace for indexed queries.
+
+        Returns:
+            Ranked ids and aligned relevance scores.
+
+        Raises:
+            TypeError: If query type does not match cache usage mode.
+        """
         if cache_name is not None:
             if not isinstance(query, int):
                 raise TypeError("Cached sparse lookup requires query index (int).")

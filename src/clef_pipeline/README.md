@@ -2,6 +2,23 @@
 
 This package contains the full evaluation pipeline. It combines dense retrieval with sparse BM25 retrieval, applies RRF fusion, and optionally reranks with a cross-encoder. The entrypoint is `clef_pipeline.main`.
 
+## Package file map
+
+Core module files under `src/clef_pipeline/clef_pipeline/`:
+
+- `main.py` — Modal app definition, remote evaluation function, and local CLI entrypoint used by `uv run modal run -m clef_pipeline.main`.
+- `pipeline.py` — `RetrievalPipeline` orchestration class: collection/query indexing, retriever execution, candidate fusion, reranking, and search output shaping.
+- `pipeline_config.py` — frozen dataclass config objects (`RetrieverConfig`, `RerankerConfig`, `PipelineConfig`) plus preset profile builder.
+- `registry.py` — string-to-component factory functions (`create_retriever`, `create_reranker`) and pipeline assembly helper.
+- `retrievers.py` — dense retrievers (BGE-M3, Harrier) and sparse BM25+ retriever including embedding/query cache behavior.
+- `rerankers.py` — cross-encoder rerankers that score fusion candidates and return sorted `(doc_index, score)` tuples.
+- `metrics.py` — metric accumulator for multilingual evaluation, producing per-language and global summaries.
+- `submission.py` — Codabench TSV writing utilities and Modal volume path/download command helpers.
+- `interfaces.py` — abstract base contracts for retriever/reranker implementations.
+- `logging_utils.py` — shared logger initialization and elapsed-time helper.
+- `utils.py` — shared constants, ranking utilities (`MRR_at_5`, `recall_at_K`), and reciprocal-rank-fusion processor.
+- `__init__.py` — package-level export list.
+
 ## How to run
 
 1. Sign up for a Modal account at https://modal.com/, install the Modal CLI and log in.

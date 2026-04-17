@@ -1,3 +1,5 @@
+"""Top-level exports for the CLEF retrieval pipeline package."""
+
 __all__ = [
     "retrievers",
     "rerankers",

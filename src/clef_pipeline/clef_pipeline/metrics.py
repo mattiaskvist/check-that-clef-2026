@@ -1,3 +1,5 @@
+"""Evaluation metric aggregation utilities for multilingual runs."""
+
 from __future__ import annotations
 
 from collections import defaultdict
@@ -6,6 +8,14 @@ from .utils import MRR_at_5, recall_at_K
 
 
 def _new_stage_buckets(fusion_top_k: int) -> dict[str, dict[str, list[float]]]:
+    """Create empty metric buckets for each pipeline stage.
+
+    Args:
+        fusion_top_k: Cutoff used for the RRF recall metric key.
+
+    Returns:
+        Nested dict of metric lists keyed by stage and metric name.
+    """
     return {
         "dense": {m: [] for m in ["mrr5", "r5", "r10", "r30", "r50"]},
         "sparse": {m: [] for m in ["mrr5", "r5", "r10", "r30", "r50"]},
@@ -15,7 +25,14 @@ def _new_stage_buckets(fusion_top_k: int) -> dict[str, dict[str, list[float]]]:
 
 
 class EvaluationMetrics:
+    """Collect per-query metrics and produce language/global summaries."""
+
     def __init__(self, fusion_top_k: int = 30):
+        """Initialize empty accumulators.
+
+        Args:
+            fusion_top_k: Cutoff used for RRF recall in reporting.
+        """
         self.fusion_top_k = fusion_top_k
         self._by_language: dict[str, dict[str, dict[str, list[float]]]] = defaultdict(
             lambda: _new_stage_buckets(self.fusion_top_k)
@@ -28,6 +45,13 @@ class EvaluationMetrics:
         true_pubkey: str | None,
         stages: dict[str, list[str]],
     ):
+        """Add one query result to the metric accumulators.
+
+        Args:
+            lang: Language code for this query.
+            true_pubkey: Ground-truth publication key. If missing, only count is updated.
+            stages: Stage outputs keyed by ``dense``, ``sparse``, ``rrf``, and ``final``.
+        """
         self._counts[lang] += 1
         if not true_pubkey:
             return
@@ -53,9 +77,18 @@ class EvaluationMetrics:
 
     @staticmethod
     def _safe_average(values: list[float]) -> float:
+        """Return the average of values or ``0.0`` when empty."""
         return sum(values) / len(values) if values else 0.0
 
     def _summarize_language(self, lang: str) -> dict[str, object]:
+        """Build a summary object for one language.
+
+        Args:
+            lang: Language code.
+
+        Returns:
+            Summary dict containing query counts and averaged metrics.
+        """
         metrics = self._by_language.get(lang)
         if not metrics:
             return {"Total Queries": self._counts[lang], "metrics": None}
@@ -69,6 +102,7 @@ class EvaluationMetrics:
         return {"Total Queries": self._counts[lang], "metrics": summary}
 
     def summary(self) -> dict[str, object]:
+        """Return language-level and global evaluation summaries."""
         language_summary = {
             lang: self._summarize_language(lang) for lang in sorted(self._counts)
         }

@@ -1,3 +1,5 @@
+"""Factory helpers for constructing retrievers, rerankers, and pipelines."""
+
 from __future__ import annotations
 
 from .pipeline import RetrievalPipeline
@@ -7,6 +9,18 @@ from .retrievers import BGEM3Retriever, HarrierRetriever, SparseRetriever
 
 
 def create_retriever(name: str, params: dict | None = None):
+    """Instantiate a retriever by registry name.
+
+    Args:
+        name: Retriever identifier.
+        params: Optional constructor keyword arguments.
+
+    Returns:
+        Concrete retriever instance.
+
+    Raises:
+        ValueError: If ``name`` is not registered.
+    """
     params = params or {}
 
     if name == "sparse":
@@ -24,6 +38,18 @@ def create_retriever(name: str, params: dict | None = None):
 
 
 def create_reranker(name: str, params: dict | None = None):
+    """Instantiate a reranker by registry name.
+
+    Args:
+        name: Reranker identifier.
+        params: Optional constructor keyword arguments.
+
+    Returns:
+        Concrete reranker instance.
+
+    Raises:
+        ValueError: If ``name`` is not registered.
+    """
     params = params or {}
     if name == "nemotron":
         return NemotronReranker(**params)
@@ -33,6 +59,14 @@ def create_reranker(name: str, params: dict | None = None):
 
 
 def build_pipeline_from_config(config: PipelineConfig) -> RetrievalPipeline:
+    """Build a retrieval pipeline and all enabled components from config.
+
+    Args:
+        config: Pipeline settings and component declarations.
+
+    Returns:
+        Fully constructed retrieval pipeline.
+    """
     retrievers = {
         retriever_config.name: create_retriever(
             retriever_config.name, retriever_config.params

@@ -1,8 +1,17 @@
+"""Cross-encoder reranker implementations used after candidate retrieval."""
+
 from .interfaces import BaseReranker
 
 
 class Gemma2BReranker(BaseReranker):
+    """Gemma-based generative reranker producing Yes/No relevance logits."""
+
     def __init__(self, model_name: str = "BAAI/bge-reranker-v2-gemma"):
+        """Load tokenizer and causal LM weights for reranking.
+
+        Args:
+            model_name: Hugging Face model id for the reranker.
+        """
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -18,6 +27,15 @@ class Gemma2BReranker(BaseReranker):
         self.yes_loc = self.tokenizer("Yes", add_special_tokens=False)["input_ids"][0]
 
     def _get_inputs(self, pairs: list[tuple[str, str]], max_length: int = 1024):
+        """Build padded model inputs for query/passage pairs.
+
+        Args:
+            pairs: Query/passage text pairs.
+            max_length: Maximum token budget for one encoded pair.
+
+        Returns:
+            Tokenizer batch dictionary as PyTorch tensors.
+        """
         prompt = "Given a query A and a passage B, determine whether the passage contains an answer to the query by providing a prediction of either 'Yes' or 'No'."
         sep = "\n"
         prompt_inputs = self.tokenizer(
@@ -71,6 +89,7 @@ class Gemma2BReranker(BaseReranker):
         )
 
     def _last_logit_pool(self, logits, attention_mask):
+        """Select final-token logits for each sequence in a padded batch."""
         left_padding = attention_mask[:, -1].sum() == attention_mask.shape[0]
         if left_padding:
             return logits[:, -1]
@@ -84,6 +103,16 @@ class Gemma2BReranker(BaseReranker):
     def rerank(
         self, query: str, doc_indices: list[int], corpus: list[str]
     ) -> list[tuple[int, float]]:
+        """Rerank candidate documents by the model's Yes-token score.
+
+        Args:
+            query: Query text.
+            doc_indices: Candidate document indices.
+            corpus: Document text corpus aligned to indices.
+
+        Returns:
+            Candidate indices paired with scores sorted descending.
+        """
         pairs = [[query, corpus[doc_id]] for doc_id in doc_indices]
         inputs = self._get_inputs(pairs).to(self.model.device)
 
@@ -100,17 +129,26 @@ class Gemma2BReranker(BaseReranker):
 
 
 class NemotronReranker(BaseReranker):
+    """Sequence-classification reranker backed by Nemotron model weights."""
+
     def __init__(
         self,
         model_name: str = "nvidia/llama-nemotron-rerank-1b-v2",
         max_length: int = 2048,
     ):
+        """Store model settings and defer heavy loading until first use.
+
+        Args:
+            model_name: Hugging Face model id for the reranker.
+            max_length: Maximum sequence length for tokenizer truncation.
+        """
         self.model_name = model_name
         self.max_length = max_length
         self.model = None
         self.tokenizer = None
 
     def _ensure_loaded(self):
+        """Lazily load tokenizer/model weights onto available GPU resources."""
         if self.model is not None:
             return
 
@@ -140,6 +178,16 @@ class NemotronReranker(BaseReranker):
     def rerank(
         self, query: str, doc_indices: list[int], corpus: list[str]
     ) -> list[tuple[int, float]]:
+        """Rerank candidate documents by sequence-classification logits.
+
+        Args:
+            query: Query text.
+            doc_indices: Candidate document indices.
+            corpus: Document text corpus aligned to indices.
+
+        Returns:
+            Candidate indices paired with scores sorted descending.
+        """
         self._ensure_loaded()
 
         texts = [

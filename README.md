@@ -29,10 +29,21 @@ uv run hf auth login
 
 ## Code Layout
 
-- `src/clef_pipeline/` — retrieval pipeline, evaluation orchestration, metrics, submission export
-- `src/clef_demo/` — Streamlit UI and Modal web hosting entrypoint
-- `src/clef_training/` — dense-retrieval training and helper scripts
-- `tests/` — regression and modular pipeline tests
+- `src/clef_pipeline/` — packaged retrieval/evaluation system (Modal entrypoint + retrieval stack)
+  - `src/clef_pipeline/clef_pipeline/main.py` — Modal app and local entrypoint for multilingual evaluation and optional submission export
+  - `src/clef_pipeline/clef_pipeline/pipeline.py` — orchestration layer for indexing, candidate generation, RRF fusion, and reranking
+  - `src/clef_pipeline/clef_pipeline/pipeline_config.py` — dataclass config model and preset profiles (`demo`, `evaluation`, `retrieval-only`)
+  - `src/clef_pipeline/clef_pipeline/registry.py` — component factories that build retrievers/rerankers and assemble the pipeline
+  - `src/clef_pipeline/clef_pipeline/retrievers.py` — dense retrievers (BGE-M3, Harrier) and sparse BM25+ retriever with cache support
+  - `src/clef_pipeline/clef_pipeline/rerankers.py` — cross-encoder rerankers (Gemma and Nemotron variants)
+  - `src/clef_pipeline/clef_pipeline/metrics.py` — per-language and global aggregation for MRR/Recall metrics
+  - `src/clef_pipeline/clef_pipeline/submission.py` — TSV submission file writing and Modal volume download command helpers
+  - `src/clef_pipeline/clef_pipeline/interfaces.py` — abstract contracts for retrievers and rerankers
+  - `src/clef_pipeline/clef_pipeline/logging_utils.py` — logger setup and simple stage timer utility
+  - `src/clef_pipeline/clef_pipeline/utils.py` — constants, ranking helpers, and reciprocal-rank-fusion utility
+- `src/clef_demo/` — Streamlit demo package with Modal backend and web app deployment entrypoints
+- `src/clef_training/` — training and hard-negative-mining scripts for dense retrieval model development
+- `tests/` — regression and modular pipeline tests for retrieval, metrics, configs, and demo integration
 
 ## Modal commands
 

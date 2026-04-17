@@ -1,3 +1,5 @@
+"""Modal entrypoint for multilingual evaluation and submission export."""
+
 import modal
 
 from .logging_utils import StageTimer, get_logger
@@ -41,6 +43,13 @@ logger = get_logger("clef_pipeline.modal")
 
 
 def _print_language_summary(lang: str, data: dict[str, object], fusion_top_k: int):
+    """Print a formatted per-language metric summary to stdout.
+
+    Args:
+        lang: Language code.
+        data: Summary payload produced by ``EvaluationMetrics.summary``.
+        fusion_top_k: Fusion cutoff used for RRF recall display.
+    """
     metrics = data["metrics"]
     if metrics is None:
         print(f"\n--- Summary for {lang.upper()} ({data['Total Queries']} Queries) ---")
@@ -77,6 +86,19 @@ def evaluate_pipeline(
     collect_submission: bool = False,
     submission_volume_subdir: str = "submissions",
 ):
+    """Run the full retrieval evaluation workflow on Modal.
+
+    Args:
+        force_recompute_sparse_cache: Recompute sparse query cache even if present.
+        force_recompute_dense_documents: Recompute dense document embeddings.
+        force_recompute_dense_queries: Recompute dense query embeddings.
+        split: Dataset split to evaluate (``train``, ``dev``, or ``test``).
+        collect_submission: Whether to write submission TSV files.
+        submission_volume_subdir: Subdirectory under cache volume for submissions.
+
+    Returns:
+        Global language results and optional submission artifact metadata.
+    """
     from datetime import datetime, timezone
 
     from datasets import load_dataset
@@ -236,6 +258,17 @@ def main(
     submission_volume_subdir: str = "submissions",
     submission_download_dir: str = "submissions",
 ):
+    """Local CLI entrypoint that dispatches Modal evaluation and export.
+
+    Args:
+        force_recompute_sparse_cache: Recompute sparse query cache even if present.
+        force_recompute_dense_documents: Recompute dense document embeddings.
+        force_recompute_dense_queries: Recompute dense query embeddings.
+        split: Dataset split to evaluate (``train``, ``dev``, or ``test``).
+        export_submission_tsv: Whether to generate submission TSV files.
+        submission_volume_subdir: Remote directory prefix in Modal volume.
+        submission_download_dir: Local destination for downloaded submission files.
+    """
     run_output = evaluate_pipeline.remote(
         force_recompute_sparse_cache=force_recompute_sparse_cache,
         force_recompute_dense_documents=force_recompute_dense_documents,
