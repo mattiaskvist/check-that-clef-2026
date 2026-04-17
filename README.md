@@ -66,6 +66,34 @@ uv run modal stop-app checkthat-streamlit-demo
 
 https://www.codabench.org/competitions/15611/#/pages-tab
 
+### Prepare files for upload
+
+1. Generate predictions for the competition split:
+
+```bash
+uv run modal run -m clef_pipeline.main \
+  --split test \
+  --export-submission-tsv \
+  --submission-volume-subdir submissions \
+  --submission-download-dir submissions
+```
+
+2. Move into the downloaded run directory (`submissions/test-<timestamp>`) and validate expected files:
+
+```bash
+cd submissions/test-<timestamp>
+ls predictions_*.tsv
+```
+
+3. Create the upload archive:
+
+```bash
+zip -r predictions.zip predictions_*.tsv
+unzip -l predictions.zip
+```
+
+Upload `predictions.zip` to Codabench.
+
 Each team must create only one account in CodaBench and submit their predictions exclusively through that account.
 Make sure your account name matches that used during CLEF registration.
 The last valid submission will be considered as the final submission!
