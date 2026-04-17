@@ -11,11 +11,21 @@ collection_dataset = load_dataset(
     "sschellhammer/CT26_Task1_SourceRetrievalForScientificWebClaims", "collection"
 )["collection"]
 
-english_queries = list(load_dataset(
-    "sschellhammer/CT26_Task1_SourceRetrievalForScientificWebClaims", "en"
-)["train"])
-german_queries = list(load_dataset("json", data_files="../data_augmentation/de_train.json")["train"])
-french_queries = list(load_dataset("json", data_files="../data_augmentation/fr_train.json")["train"])
+english_queries = list(
+    load_dataset(
+        "sschellhammer/CT26_Task1_SourceRetrievalForScientificWebClaims", "en"
+    )["train"]
+)
+german_queries = list(
+    load_dataset(
+        "sschellhammer/CT26_Task1_SourceRetrievalForScientificWebClaims", "de"
+    )["train"]
+)
+french_queries = list(
+    load_dataset(
+        "sschellhammer/CT26_Task1_SourceRetrievalForScientificWebClaims", "fr"
+    )["train"]
+)
 
 # Build a proxy map: pubkey -> English query text
 # This allows DE/FR queries to "borrow" an English query for cross-lingual BM25 mining
@@ -36,7 +46,7 @@ for doc in tqdm(
 ):
     pubkey = doc["pubkey"]
     text_representation = f"{doc['title']}\n{doc['abstract']}"
-    
+
     collection_mapping[pubkey] = text_representation
     corpus_pubkeys.append(pubkey)
     corpus_tokens.append(text_representation.lower().split())
@@ -48,10 +58,11 @@ bm25 = BM25Okapi(corpus_tokens)
 # This prevents us from re-running BM25 for the DE and FR translations
 hn_cache = {}
 
+
 def get_cached_hard_negative(search_text, true_pubkey):
     """Runs BM25 or fetches from cache to return the hardest negative document."""
     cache_key = (search_text, true_pubkey)
-    
+
     if cache_key in hn_cache:
         return hn_cache[cache_key]
 
@@ -65,8 +76,9 @@ def get_cached_hard_negative(search_text, true_pubkey):
             negative_text = collection_mapping[candidate_pubkey]
             hn_cache[cache_key] = negative_text
             return negative_text
-            
+
     return None
+
 
 # 4. Mine Hard Negatives and Build Triplets
 triplets = []
@@ -78,12 +90,18 @@ for row in tqdm(english_queries, desc="Processing English"):
     if true_pubkey not in collection_mapping:
         missing_positives += 1
         continue
-        
+
     positive_text = collection_mapping[true_pubkey]
     negative_text = get_cached_hard_negative(row["text"], true_pubkey)
-    
+
     if negative_text:
-        triplets.append({"anchor": row["text"], "positive": positive_text, "negative": negative_text})
+        triplets.append(
+            {
+                "anchor": row["text"],
+                "positive": positive_text,
+                "negative": negative_text,
+            }
+        )
 
 
 print("Mining triplets for German queries...")
@@ -92,15 +110,21 @@ for row in tqdm(german_queries, desc="Processing German"):
     if true_pubkey not in collection_mapping:
         missing_positives += 1
         continue
-        
+
     positive_text = collection_mapping[true_pubkey]
-    
+
     # Borrow the English proxy text if it exists, otherwise fall back to German
     search_text = en_proxy_map.get(true_pubkey, row["text"])
     negative_text = get_cached_hard_negative(search_text, true_pubkey)
-    
+
     if negative_text:
-        triplets.append({"anchor": row["text"], "positive": positive_text, "negative": negative_text})
+        triplets.append(
+            {
+                "anchor": row["text"],
+                "positive": positive_text,
+                "negative": negative_text,
+            }
+        )
 
 
 print("Mining triplets for French queries...")
@@ -109,15 +133,21 @@ for row in tqdm(french_queries, desc="Processing French"):
     if true_pubkey not in collection_mapping:
         missing_positives += 1
         continue
-        
+
     positive_text = collection_mapping[true_pubkey]
-    
+
     # Borrow the English proxy text if it exists, otherwise fall back to French
     search_text = en_proxy_map.get(true_pubkey, row["text"])
     negative_text = get_cached_hard_negative(search_text, true_pubkey)
-    
+
     if negative_text:
-        triplets.append({"anchor": row["text"], "positive": positive_text, "negative": negative_text})
+        triplets.append(
+            {
+                "anchor": row["text"],
+                "positive": positive_text,
+                "negative": negative_text,
+            }
+        )
 
 
 # 5. Save the Triplets to Disk
@@ -128,4 +158,6 @@ with open(output_file, "w", encoding="utf-8") as f:
     for triplet in triplets:
         f.write(json.dumps(triplet, ensure_ascii=False) + "\n")
 
-print(f"Done! Note: {missing_positives} queries were skipped because their target paper was not in the collection.")
+print(
+    f"Done! Note: {missing_positives} queries were skipped because their target paper was not in the collection."
+)

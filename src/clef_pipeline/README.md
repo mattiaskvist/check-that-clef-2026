@@ -1,6 +1,23 @@
-# Full Evaluation Pipeline
+# CLEF Pipeline (`src/clef_pipeline`)
 
-This directory contains the code for the full evaluation pipeline, which integrates the dense retrieval model (BGE-M3 with LoRA fine-tuning) with the sparse retrieval results (vanilla BM25), applies RRF fusion, and performs final re-ranking using a cross-encoder. The main script `main.py` orchestrates the entire process.
+This package contains the full evaluation pipeline. It combines dense retrieval with sparse BM25 retrieval, applies RRF fusion, and optionally reranks with a cross-encoder. The entrypoint is `clef_pipeline.main`.
+
+## Package file map
+
+Core module files under `src/clef_pipeline/clef_pipeline/`:
+
+- `main.py` — Modal app definition, remote evaluation function, and local CLI entrypoint used by `uv run modal run -m clef_pipeline.main`.
+- `pipeline.py` — `RetrievalPipeline` orchestration class: collection/query indexing, retriever execution, candidate fusion, reranking, and search output shaping.
+- `pipeline_config.py` — frozen dataclass config objects (`RetrieverConfig`, `RerankerConfig`, `PipelineConfig`) plus preset profile builder.
+- `registry.py` — string-to-component factory functions (`create_retriever`, `create_reranker`) and pipeline assembly helper.
+- `retrievers.py` — dense retrievers (BGE-M3, Harrier) and sparse BM25+ retriever including embedding/query cache behavior.
+- `rerankers.py` — cross-encoder rerankers that score fusion candidates and return sorted `(doc_index, score)` tuples.
+- `metrics.py` — metric accumulator for multilingual evaluation, producing per-language and global summaries.
+- `submission.py` — Codabench TSV writing utilities and Modal volume path/download command helpers.
+- `interfaces.py` — abstract base contracts for retriever/reranker implementations.
+- `logging_utils.py` — shared logger initialization and elapsed-time helper.
+- `utils.py` — shared constants, ranking utilities (`MRR_at_5`, `recall_at_K`), and reciprocal-rank-fusion processor.
+- `__init__.py` — package-level export list.
 
 ## How to run
 
@@ -16,11 +33,11 @@ uv run modal setup
 uv run modal secret create hf-token HF_TOKEN=hf_XXXXXXXXXXXXXXXXXXXXXXXXXXXX
 ```
 
-3. Ensure you have access to the huggingface repo "boyes-boys-clef-2026/bge-m3-checkthat-finetuned" which contains the LoRA adapter weights for the fine-tuned BGE-M3 model.
+3. Ensure you have access to required Hugging Face model repos (for configured retrievers/rerankers).
 
 ```bash
 # from root of the project, run:
-uv run modal run -d -m full_pipeline.main
+uv run modal run -d -m clef_pipeline.main
 ```
 
 ## How the Modal workflow works
@@ -31,7 +48,7 @@ uv run modal run -d -m full_pipeline.main
 
 ### Do you need to keep your computer running?
 
-- For pure evaluation runs (`uv run modal run -d -m full_pipeline.main`), you can treat it as fire-and-forget once it's started.
+- For pure evaluation runs (`uv run modal run -d -m clef_pipeline.main`), you can treat it as fire-and-forget once it's started.
 - For submission export, this project writes `predictions_{lang}.tsv` to the Modal volume and prints a `modal volume get ...` command you can run locally to download them.
 
 Sparse query rankings and scores are cached between runs (under the existing Modal volume mount), so reranking and fusion experiments can iterate without recomputing BM25 for each query.
@@ -39,17 +56,17 @@ Sparse query rankings and scores are cached between runs (under the existing Mod
 If you need to rebuild sparse cache artifacts after code changes, run:
 
 ```bash
-uv run modal run -d -m full_pipeline.main --force-recompute-sparse-cache
+uv run modal run -d -m clef_pipeline.main --force-recompute-sparse-cache
 ```
 
 Dense embeddings are also cached between runs. You can force dense recomputation independently:
 
 ```bash
 # Recompute dense document embeddings
-uv run modal run -d -m full_pipeline.main --force-recompute-dense-documents
+uv run modal run -d -m clef_pipeline.main --force-recompute-dense-documents
 
 # Recompute dense query embeddings
-uv run modal run -d -m full_pipeline.main --force-recompute-dense-queries
+uv run modal run -d -m clef_pipeline.main --force-recompute-dense-queries
 ```
 
 ## Export submission TSV files
@@ -57,7 +74,7 @@ uv run modal run -d -m full_pipeline.main --force-recompute-dense-queries
 To generate Codabench-ready `predictions_{lang}.tsv` files (columns: `index`, `preds`), run:
 
 ```bash
-uv run modal run -m full_pipeline.main \
+uv run modal run -m clef_pipeline.main \
   --split dev \
   --export-submission-tsv \
   --submission-volume-subdir submissions \
@@ -67,7 +84,7 @@ uv run modal run -m full_pipeline.main \
 For competition export, switch to the unlabeled split:
 
 ```bash
-uv run modal run -m full_pipeline.main \
+uv run modal run -m clef_pipeline.main \
   --split test \
   --export-submission-tsv \
   --submission-volume-subdir submissions \
@@ -77,7 +94,7 @@ uv run modal run -m full_pipeline.main \
 You can also run on `train` for debugging or analysis:
 
 ```bash
-uv run modal run -m full_pipeline.main \
+uv run modal run -m clef_pipeline.main \
   --split train \
   --export-submission-tsv \
   --submission-volume-subdir submissions \
@@ -94,6 +111,24 @@ At the end of the run, the command prints an exact download command you can run 
 uv run modal volume get checkthat-embedding-cache /submissions/dev-20260416-191700 submissions
 ```
 
+## Prepare final `predictions.zip` for Codabench
+
+After exporting with `--split test` and downloading the folder, package the TSVs like this:
+
+```bash
+cd submissions/test-<timestamp>
+ls predictions_*.tsv
+zip -r predictions.zip predictions_*.tsv
+unzip -l predictions.zip
+```
+
+Expected contents:
+- `predictions_en.tsv`
+- `predictions_de.tsv`
+- `predictions_fr.tsv`
+
+Upload `predictions.zip` to the Codabench competition page.
+
 ## Current Stats on Dev
 
 Reported metrics (MRR@5, R@5, R@10, R@30) for the full pipeline on the dev set are as follows:
@@ -107,14 +142,32 @@ Reported metrics (MRR@5, R@5, R@10, R@30) for the full pipeline on the dev set a
 
 Note: These numbers will need to be updated as we continue to refine the pipeline. The current results are based on the dev set, which we are treating as a validation set for iterative improvements. Dashing indicates metrics not logged for that specific pipeline stage.
 
-## Next Steps
+## Streamlit demo package
 
-- Continue to iterate on the dense retrieval fine-tuning to try to close the gap between the dense-only and final reranked results. This may involve experimenting with different training hyperparameters, more training epochs, or even trying out different base models. Most likely, the hard negative mining strategy can be improved to provide more challenging negatives during training, which should help the model learn better representations.
+The Streamlit app now lives in `src/clef_demo/` and imports the pipeline package.
 
-- Explore more advanced fusion techniques beyond RRF, such as learning-to-rank models that can take the dense and sparse scores as input features and learn an optimal way to combine them.
+### Local Streamlit demo
 
-- For the final re-ranking stage, we can experiment with different cross-encoder architectures or even try out generative re-ranking approaches using large language models to see if we can further boost the final retrieval performance. I belive [jina-reranker-v3](https://huggingface.co/jina-ai/jina-reranker-v3) could be a strong candidate for this task, as it is specifically designed for re-ranking and has shown strong performance on various benchmarks. The current cross-encoder we are using ([BAAI/bge-reraker-v2-gemma](https://huggingface.co/BAAI/bge-reraker-v2-gemma)) is a good starting point, but it may not be fully optimized for our specific retrieval task, with different languages etc. It would be worth experimenting with other models to see if we can achieve better final results. Maybe the newly released [Gemma 4](https://deepmind.google/models/gemma/gemma-4/) can be a strong candidate for this, given its state-of-the-art performance on various NLP tasks.
+```bash
+uv sync
+uv run streamlit run src/clef_demo/clef_demo/streamlit_app.py
+```
 
-- Improve the sparse retrieval component by experimenting with different BM25 parameters or even trying out more advanced sparse retrieval models like SPLADE or DeepCT, which can provide better sparse representations and potentially improve the overall fusion results.
+The demo:
+- indexes the full collection;
+- optionally merges custom JSON documents by `pubkey` (custom overrides base);
+- allows selecting one or more retrievers;
+- allows enabling/disabling fusion and reranking;
+- returns top-5 matches for a user tweet.
 
-- Work on how metadata from the documents can be better utilized in the retrieval and re-ranking process. Currently, the pipeline only uses the title and abstract for retrieval, but `authors` and `venue` information could also be valuable signals for both retrieval and re-ranking. We can experiment with ways to incorporate this metadata, such as concatenating it with the title and abstract for the dense retriever, or using it as additional features in the re-ranking stage. Maybe we can use the information to look for matches and boost scores for documents that have the same authors or are published in the same venue as the query paper, as these could be strong indicators of relevance.
+### Host Streamlit demo on Modal
+
+```bash
+uv run modal serve -m clef_demo.modal_app
+```
+
+To deploy persistently:
+
+```bash
+uv run modal deploy -m clef_demo.modal_app
+```

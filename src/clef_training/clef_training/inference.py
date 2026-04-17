@@ -4,7 +4,7 @@ from peft import PeftModel
 # 1. Load the original base model
 print("Loading base model...")
 model = SentenceTransformer("BAAI/bge-m3")
-hf_id = "mattiaskvist/bge-m3-checkthat-finetuned" # NOTE: this is currently private, we need to clean up some stuff before making it public.
+hf_id = "mattiaskvist/bge-m3-checkthat-finetuned"  # NOTE: this is currently private, we need to clean up some stuff before making it public.
 
 # 2. Use PEFT directly to inject the weights into the underlying transformer
 print("Injecting LoRA adapters...")
@@ -23,7 +23,7 @@ query = "Climate change significantly impacts marine biodiversity."
 # 2. Define a relevant and an irrelevant document (Title + Abstract format)
 documents = [
     "Title: Ocean Warming and Species Migration\nAbstract: This study demonstrates how rising global ocean temperatures are forcing marine species to migrate towards the poles, drastically altering coastal biodiversity.",
-    "Title: The Fall of the Roman Empire\nAbstract: A historical overview of the political instability and economic decline that led to the collapse of ancient Rome."
+    "Title: The Fall of the Roman Empire\nAbstract: A historical overview of the political instability and economic decline that led to the collapse of ancient Rome.",
 ]
 
 # 3. Generate the dense embeddings!
@@ -37,4 +37,4 @@ scores = util.cos_sim(query_embedding, doc_embeddings)[0]
 # 5. Display the results
 print("\nResults:")
 for i, score in enumerate(scores):
-    print(f"Document {i+1} Score: {score:.4f}  |  {documents[i][:45]}...")
+    print(f"Document {i + 1} Score: {score:.4f}  |  {documents[i][:45]}...")

@@ -3,7 +3,7 @@ import os
 import tempfile
 import unittest
 
-from full_pipeline.submission import (
+from clef_pipeline.submission import (
     normalize_split,
     modal_volume_download_command,
     submission_volume_remote_dir,

@@ -6,7 +6,7 @@ import unittest
 
 import numpy as np
 
-from full_pipeline.retrievers import HarrierRetriever, SparseRetriever
+from clef_pipeline.retrievers import HarrierRetriever, SparseRetriever
 
 
 class _SortResult(list):
