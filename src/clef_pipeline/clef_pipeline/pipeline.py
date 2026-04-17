@@ -132,13 +132,15 @@ class RetrievalPipeline:
         self,
         lang: str,
         query_texts: list[str],
+        cache_lang: str | None = None,
         cache_dir: str | None = None,
         force_recompute_sparse_cache: bool = False,
         force_recompute_dense_queries: bool = False,
     ):
+        cache_lang_key = cache_lang or lang
         for retriever_name, retriever in self.retrievers.items():
-            cache_name = f"{retriever_name}_queries_{lang}"
-            self._cache_names[(retriever_name, lang)] = cache_name
+            cache_name = f"{retriever_name}_queries_{cache_lang_key}"
+            self._cache_names[(retriever_name, cache_lang_key)] = cache_name
             self._index_query_cache(
                 retriever_name=retriever_name,
                 retriever=retriever,
@@ -209,7 +211,11 @@ class RetrievalPipeline:
 
     def search_text(self, query_text: str, lang: str = "en") -> dict[str, object]:
         cache_lang = f"{lang}_adhoc_{uuid.uuid4().hex[:8]}"
-        self.index_queries_for_language(lang=cache_lang, query_texts=[query_text])
+        self.index_queries_for_language(
+            lang=lang,
+            query_texts=[query_text],
+            cache_lang=cache_lang,
+        )
         return self.search_cached_query(query_idx=0, query_text=query_text, lang=cache_lang)
 
     def unload_dense_models(self):

@@ -13,7 +13,7 @@ def create_retriever(name: str, params: dict | None = None):
         return SparseRetriever()
     if name == "harrier-270m":
         return HarrierRetriever(
-            model_name="microsoft/harrier-oss-v1.5-0.270m",
+            model_name="microsoft/harrier-oss-v1-270m",
             **params,
         )
     if name == "harrier-27b":

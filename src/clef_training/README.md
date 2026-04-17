@@ -1,5 +1,10 @@
-## How to Execute the Training Pipeline
-Because Modal runs in the cloud, your remote GPU container won't automatically have access to your local JSON dataset. You will need to upload your data to the Modal Volume before initiating the training.
+# Training (`src/clef_training`)
+
+These scripts handle dense-retrieval training/inference workflows.
+
+## How to execute training on Modal
+
+Because Modal runs in the cloud, your remote GPU container won't automatically have access to your local JSON dataset. Upload your dataset to the Modal volume before training.
 
 Step A: Upload your training data to the Volume
 Use the Modal CLI to push your your_hard_negative_triplets.json file into the remote volume:
@@ -12,7 +17,7 @@ uv run modal volume put clef-vol hard_negative_triplets.json /hard_negative_trip
 Step B: Run the Training Script in the Modal Container
 
 ```bash
-uv run modal run -d train_bge_modal.py
+uv run modal run -d -m clef_training.train_bge_modal
 ```
 
 Modal will dynamically provision the container, attach the GPU, mount the volume containing your dataset, and execute the training loop.

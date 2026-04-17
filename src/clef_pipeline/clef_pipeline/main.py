@@ -35,7 +35,7 @@ app = modal.App("checkthat-evaluation-pipeline")
 EMBEDDING_CACHE_VOLUME_NAME = "checkthat-embedding-cache"
 embedding_cache = modal.Volume.from_name(EMBEDDING_CACHE_VOLUME_NAME, create_if_missing=True)
 CACHE_MOUNT = "/cache/embeddings"
-logger = get_logger("full_pipeline.modal")
+logger = get_logger("clef_pipeline.modal")
 
 
 def _print_language_summary(lang: str, data: dict[str, object], fusion_top_k: int):

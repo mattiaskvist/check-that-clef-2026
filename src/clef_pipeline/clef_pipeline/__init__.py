@@ -9,6 +9,4 @@ __all__ = [
     "registry",
     "logging_utils",
     "metrics",
-    "demo_app",
-    "demo_modal",
 ]

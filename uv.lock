@@ -13,6 +13,14 @@ resolution-markers = [
     "python_full_version < '3.12' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 
+[manifest]
+members = [
+    "check-that-clef-2026",
+    "clef-demo",
+    "clef-pipeline",
+    "clef-training",
+]
+
 [[package]]
 name = "accelerate"
 version = "1.13.0"
@@ -470,6 +478,9 @@ name = "check-that-clef-2026"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "clef-demo" },
+    { name = "clef-pipeline" },
+    { name = "clef-training" },
     { name = "datasets" },
     { name = "deep-translator" },
     { name = "dotenv" },
@@ -498,6 +509,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "clef-demo", editable = "src/clef_demo" },
+    { name = "clef-pipeline", editable = "src/clef_pipeline" },
+    { name = "clef-training", editable = "src/clef_training" },
     { name = "datasets", specifier = ">=4.8.4" },
     { name = "deep-translator", specifier = ">=1.9.1" },
     { name = "dotenv", specifier = ">=0.9.9" },
@@ -521,6 +535,77 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [{ name = "ruff", specifier = ">=0.15.7" }]
+
+[[package]]
+name = "clef-demo"
+version = "0.1.0"
+source = { editable = "src/clef_demo" }
+dependencies = [
+    { name = "clef-pipeline" },
+    { name = "streamlit" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "clef-pipeline", editable = "src/clef_pipeline" },
+    { name = "streamlit", specifier = ">=1.50.0" },
+]
+
+[[package]]
+name = "clef-pipeline"
+version = "0.1.0"
+source = { editable = "src/clef_pipeline" }
+dependencies = [
+    { name = "datasets" },
+    { name = "deep-translator" },
+    { name = "modal" },
+    { name = "nltk" },
+    { name = "numpy" },
+    { name = "peft" },
+    { name = "rank-bm25" },
+    { name = "sentence-transformers" },
+    { name = "torch" },
+    { name = "transformers" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "datasets", specifier = ">=4.8.4" },
+    { name = "deep-translator", specifier = ">=1.9.1" },
+    { name = "modal", specifier = ">=1.4.1" },
+    { name = "nltk", specifier = ">=3.9.4" },
+    { name = "numpy", specifier = ">=2.4.3" },
+    { name = "peft", specifier = ">=0.18.1" },
+    { name = "rank-bm25", specifier = ">=0.2.2" },
+    { name = "sentence-transformers", specifier = ">=5.3.0" },
+    { name = "torch", specifier = ">=2.11.0" },
+    { name = "transformers", specifier = ">=5.3.0" },
+]
+
+[[package]]
+name = "clef-training"
+version = "0.1.0"
+source = { editable = "src/clef_training" }
+dependencies = [
+    { name = "datasets" },
+    { name = "modal" },
+    { name = "peft" },
+    { name = "rank-bm25" },
+    { name = "sentence-transformers" },
+    { name = "torch" },
+    { name = "transformers" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "datasets", specifier = ">=4.8.4" },
+    { name = "modal", specifier = ">=1.4.1" },
+    { name = "peft", specifier = ">=0.18.1" },
+    { name = "rank-bm25", specifier = ">=0.2.2" },
+    { name = "sentence-transformers", specifier = ">=5.3.0" },
+    { name = "torch", specifier = ">=2.11.0" },
+    { name = "transformers", specifier = ">=5.3.0" },
+]
 
 [[package]]
 name = "click"

@@ -1,9 +1,16 @@
 # check-that-clef-2026
 
+## Quick start
+
 ```bash
 brew install uv
 uv sync
-uv run main.py
+
+# Run evaluation pipeline
+uv run python -m clef_pipeline.main
+
+# Run Streamlit demo locally
+uv run streamlit run src/clef_demo/clef_demo/streamlit_app.py
 
 # To add or remove dependencies, use the following commands:
 uv add <dependency>
@@ -15,6 +22,23 @@ uv run ruff check
 
 # Authenticate with HuggingFace
 uv run hf auth login
+```
+
+## Code Layout
+
+- `src/clef_pipeline/` — retrieval pipeline, evaluation orchestration, metrics, submission export
+- `src/clef_demo/` — Streamlit UI and Modal web hosting entrypoint
+- `src/clef_training/` — dense-retrieval training and helper scripts
+- `tests/` — regression and modular pipeline tests
+
+## Modal commands
+
+```bash
+# Evaluation pipeline
+uv run modal run -m clef_pipeline.main --split dev
+
+# Streamlit demo on Modal
+uv run modal serve -m clef_demo.modal_app
 ```
 
 ## Submission Guidelines

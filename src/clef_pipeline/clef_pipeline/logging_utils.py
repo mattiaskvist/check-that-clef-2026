@@ -2,7 +2,7 @@ import logging
 from time import perf_counter
 
 
-def get_logger(name: str = "full_pipeline") -> logging.Logger:
+def get_logger(name: str = "clef_pipeline") -> logging.Logger:
     logger = logging.getLogger(name)
     if logger.handlers:
         return logger

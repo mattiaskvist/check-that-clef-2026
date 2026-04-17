@@ -1,6 +1,6 @@
-# Full Evaluation Pipeline
+# CLEF Pipeline (`src/clef_pipeline`)
 
-This directory contains the code for the full evaluation pipeline, which integrates the dense retrieval model (BGE-M3 with LoRA fine-tuning) with the sparse retrieval results (vanilla BM25), applies RRF fusion, and performs final re-ranking using a cross-encoder. The main script `main.py` orchestrates the entire process.
+This package contains the full evaluation pipeline. It combines dense retrieval with sparse BM25 retrieval, applies RRF fusion, and optionally reranks with a cross-encoder. The entrypoint is `clef_pipeline.main`.
 
 ## How to run
 
@@ -16,11 +16,11 @@ uv run modal setup
 uv run modal secret create hf-token HF_TOKEN=hf_XXXXXXXXXXXXXXXXXXXXXXXXXXXX
 ```
 
-3. Ensure you have access to the huggingface repo "boyes-boys-clef-2026/bge-m3-checkthat-finetuned" which contains the LoRA adapter weights for the fine-tuned BGE-M3 model.
+3. Ensure you have access to required Hugging Face model repos (for configured retrievers/rerankers).
 
 ```bash
 # from root of the project, run:
-uv run modal run -d -m full_pipeline.main
+uv run modal run -d -m clef_pipeline.main
 ```
 
 ## How the Modal workflow works
@@ -31,7 +31,7 @@ uv run modal run -d -m full_pipeline.main
 
 ### Do you need to keep your computer running?
 
-- For pure evaluation runs (`uv run modal run -d -m full_pipeline.main`), you can treat it as fire-and-forget once it's started.
+- For pure evaluation runs (`uv run modal run -d -m clef_pipeline.main`), you can treat it as fire-and-forget once it's started.
 - For submission export, this project writes `predictions_{lang}.tsv` to the Modal volume and prints a `modal volume get ...` command you can run locally to download them.
 
 Sparse query rankings and scores are cached between runs (under the existing Modal volume mount), so reranking and fusion experiments can iterate without recomputing BM25 for each query.
@@ -39,17 +39,17 @@ Sparse query rankings and scores are cached between runs (under the existing Mod
 If you need to rebuild sparse cache artifacts after code changes, run:
 
 ```bash
-uv run modal run -d -m full_pipeline.main --force-recompute-sparse-cache
+uv run modal run -d -m clef_pipeline.main --force-recompute-sparse-cache
 ```
 
 Dense embeddings are also cached between runs. You can force dense recomputation independently:
 
 ```bash
 # Recompute dense document embeddings
-uv run modal run -d -m full_pipeline.main --force-recompute-dense-documents
+uv run modal run -d -m clef_pipeline.main --force-recompute-dense-documents
 
 # Recompute dense query embeddings
-uv run modal run -d -m full_pipeline.main --force-recompute-dense-queries
+uv run modal run -d -m clef_pipeline.main --force-recompute-dense-queries
 ```
 
 ## Export submission TSV files
@@ -57,7 +57,7 @@ uv run modal run -d -m full_pipeline.main --force-recompute-dense-queries
 To generate Codabench-ready `predictions_{lang}.tsv` files (columns: `index`, `preds`), run:
 
 ```bash
-uv run modal run -m full_pipeline.main \
+uv run modal run -m clef_pipeline.main \
   --split dev \
   --export-submission-tsv \
   --submission-volume-subdir submissions \
@@ -67,7 +67,7 @@ uv run modal run -m full_pipeline.main \
 For competition export, switch to the unlabeled split:
 
 ```bash
-uv run modal run -m full_pipeline.main \
+uv run modal run -m clef_pipeline.main \
   --split test \
   --export-submission-tsv \
   --submission-volume-subdir submissions \
@@ -77,7 +77,7 @@ uv run modal run -m full_pipeline.main \
 You can also run on `train` for debugging or analysis:
 
 ```bash
-uv run modal run -m full_pipeline.main \
+uv run modal run -m clef_pipeline.main \
   --split train \
   --export-submission-tsv \
   --submission-volume-subdir submissions \
@@ -119,15 +119,15 @@ Note: These numbers will need to be updated as we continue to refine the pipelin
 
 - Work on how metadata from the documents can be better utilized in the retrieval and re-ranking process. Currently, the pipeline only uses the title and abstract for retrieval, but `authors` and `venue` information could also be valuable signals for both retrieval and re-ranking. We can experiment with ways to incorporate this metadata, such as concatenating it with the title and abstract for the dense retriever, or using it as additional features in the re-ranking stage. Maybe we can use the information to look for matches and boost scores for documents that have the same authors or are published in the same venue as the query paper, as these could be strong indicators of relevance.
 
-## Streamlit Demo (Modular Pipeline)
+## Streamlit demo package
 
-The repository now includes a configurable pipeline layer (`pipeline.py`, `pipeline_config.py`, `registry.py`) and a Streamlit demo app.
+The Streamlit app now lives in `src/clef_demo/` and imports the pipeline package.
 
 ### Local Streamlit demo
 
 ```bash
 uv sync
-uv run streamlit run full_pipeline/demo_app.py
+uv run streamlit run src/clef_demo/clef_demo/streamlit_app.py
 ```
 
 The demo:
@@ -140,11 +140,11 @@ The demo:
 ### Host Streamlit demo on Modal
 
 ```bash
-uv run modal serve -m full_pipeline.demo_modal
+uv run modal serve -m clef_demo.modal_app
 ```
 
 To deploy persistently:
 
 ```bash
-uv run modal deploy -m full_pipeline.demo_modal
+uv run modal deploy -m clef_demo.modal_app
 ```

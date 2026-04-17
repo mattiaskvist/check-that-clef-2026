@@ -14,8 +14,16 @@ collection_dataset = load_dataset(
 english_queries = list(load_dataset(
     "sschellhammer/CT26_Task1_SourceRetrievalForScientificWebClaims", "en"
 )["train"])
-german_queries = list(load_dataset("json", data_files="../data_augmentation/de_train.json")["train"])
-french_queries = list(load_dataset("json", data_files="../data_augmentation/fr_train.json")["train"])
+german_queries = list(
+    load_dataset("sschellhammer/CT26_Task1_SourceRetrievalForScientificWebClaims", "de")[
+        "train"
+    ]
+)
+french_queries = list(
+    load_dataset("sschellhammer/CT26_Task1_SourceRetrievalForScientificWebClaims", "fr")[
+        "train"
+    ]
+)
 
 # Build a proxy map: pubkey -> English query text
 # This allows DE/FR queries to "borrow" an English query for cross-lingual BM25 mining
