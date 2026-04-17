@@ -57,6 +57,9 @@ uv run modal deploy src/clef_demo/clef_demo/modal_app.py
 # Streamlit demo on Modal (live-reload dev mode)
 uv run modal serve -m clef_demo.modal_app
 
+# Deploy backend used by the Streamlit demo
+uv run modal deploy src/clef_demo/clef_demo/backend.py
+
 # Stop deployed demo apps
 uv run modal stop-app clef-backend
 uv run modal stop-app checkthat-streamlit-demo
