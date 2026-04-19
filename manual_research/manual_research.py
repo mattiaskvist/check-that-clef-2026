@@ -11,9 +11,9 @@ from deep_translator import GoogleTranslator
 
 
 # Config
-EXPERIMENT_COUNT = 8
-LANG = "de"
-PERCENT = 10
+EXPERIMENT_COUNT = 18
+LANG = "en"
+PERCENT = 5
 TOP_K = 50
 K_VALUES = [3,5,25,50]
 
@@ -31,32 +31,34 @@ MULTILINGUAL_STOPWORDS = set(
     stopwords.words("english") + stopwords.words("german") + stopwords.words("french")
 )
 
+TRANSLATE_TABLE = str.maketrans(string.punctuation, " " * len(string.punctuation))
+
 
 # Tokenization function
 def tokenize(text):
-    translator = str.maketrans(string.punctuation, " " * len(string.punctuation))
-    clean_text = text.lower().translate(translator)
-    tokens = [stemmer.stem(t) for t in clean_text.split() if t not in MULTILINGUAL_STOPWORDS]
-    bigrams = [
-        tokens[i] + "_" + tokens[i+1]
-        for i in range(len(tokens)-1)
-    ]
-    tokens.extend(bigrams)
+    clean_text = text.lower().translate(TRANSLATE_TABLE)
+    tokens = clean_text.split()
+    tokens = [t for t in tokens if t not in MULTILINGUAL_STOPWORDS and len(t) > 1]
+    tokens = [stemmer.stem(t) for t in tokens]
+    n = len(tokens)
+
+    if n > 1:
+        bigrams = [None] * (n - 1)
+        for i in range(n - 1):
+            bigrams[i] = tokens[i] + "_" + tokens[i+1]
+        tokens.extend(bigrams)
+
     return tokens
 
 
 # Article building function
 def build_article(row):
-    """
-    Easily change article structure here.
-    """
+    title = row.get("title") or ""
+    abstract = row.get("abstract") or ""
+    authors = row.get("authors") or ""
+    venue = row.get("venue") or ""
 
-    title = row["title"]
-    abstract = row["abstract"]
-    authors = row["authors"]
-    venue = row["venue"]
-
-    return title * 3 + " " + venue * 2 + " " + abstract
+    return " ".join([title, title, title, venue, venue, abstract])
 
 
 # Load datasets
@@ -79,29 +81,24 @@ def load_data():
 
 # Corpus building
 def build_corpus(collection_records):
+    n = len(collection_records)
+    articles = [None] * n
+    pubkeys = np.empty(n, dtype=object)
 
-    articles = []
-    pubkeys = []
-
-    for row in collection_records:
-
+    for i, row in enumerate(collection_records):
         text = build_article(row)
-        articles.append(text)
-        pubkeys.append(row["pubkey"])
+        articles[i] = text
+        pubkeys[i] = row["pubkey"]
 
     tokenized = [tokenize(a) for a in articles]
-
-    return tokenized, np.array(pubkeys)
+    return tokenized, pubkeys
 
 
 # Query sampling for evaluation
 def sample_queries(tweets, seed):
-
-    random.seed(seed)
-
+    rng = random.Random(seed)
     sample_size = int(len(tweets) * (PERCENT / 100))
-
-    return random.sample(tweets, sample_size)
+    return rng.sample(tweets, sample_size)
 
 
 # Evaluation
