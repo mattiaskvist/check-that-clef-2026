@@ -142,20 +142,19 @@ def train_model():
 
     print("Starting training...")
     trainer.train()
-    
+
     # load_best_model_at_end should have already loaded the best weights,
     # but we need to ensure the PEFT adapters are correctly mapped
     # We will still get warnings about missing keys,
     # but this is expected due to the way PEFT modifies the model architecture
-    
+
     best_ckpt = trainer.state.best_model_checkpoint
     if best_ckpt:
-        print(f"\nHealing model prefix bug. Loading true best weights from: {best_ckpt}")
-        # use the PEFT library to correctly map the weights
-        model[0].auto_model = PeftModel.from_pretrained(
-            model[0].auto_model, 
-            best_ckpt
+        print(
+            f"\nHealing model prefix bug. Loading true best weights from: {best_ckpt}"
         )
+        # use the PEFT library to correctly map the weights
+        model[0].auto_model = PeftModel.from_pretrained(model[0].auto_model, best_ckpt)
     else:
         print("\nWarning: Could not identify best checkpoint.")
 

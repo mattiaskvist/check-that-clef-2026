@@ -1,0 +1,24 @@
+[project]
+name = "clef-pipeline"
+version = "0.1.0"
+description = "CLEF retrieval pipeline package"
+requires-python = ">=3.11"
+dependencies = [
+    "datasets>=4.8.4",
+    "deep-translator>=1.9.1",
+    "modal>=1.4.1",
+    "nltk>=3.9.4",
+    "numpy>=2.4.3",
+    "peft>=0.18.1",
+    "rank-bm25>=0.2.2",
+    "sentence-transformers>=5.3.0",
+    "torch>=2.11.0",
+    "transformers>=5.3.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["clef_pipeline"]

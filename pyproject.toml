@@ -5,6 +5,9 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "clef-demo",
+    "clef-pipeline",
+    "clef-training",
     "datasets>=4.8.4",
     "deep-translator>=1.9.1",
     "dotenv>=0.9.9",
@@ -20,12 +23,27 @@ dependencies = [
     "pydantic>=2.12.5",
     "python-dotenv>=1.2.2",
     "rank-bm25>=0.2.2",
+    "scikit-learn>=1.6.0",
     "sentence-transformers>=5.3.0",
+    "streamlit>=1.50.0",
     "torch>=2.11.0",
     "transformers>=5.3.0",
 ]
 
 [dependency-groups]
 dev = [
+    "pytest>=9.0.3",
     "ruff>=0.15.7",
 ]
+
+[tool.uv.workspace]
+members = [
+    "src/clef_pipeline",
+    "src/clef_demo",
+    "src/clef_training",
+]
+
+[tool.uv.sources]
+clef-pipeline = { workspace = true }
+clef-demo = { workspace = true }
+clef-training = { workspace = true }

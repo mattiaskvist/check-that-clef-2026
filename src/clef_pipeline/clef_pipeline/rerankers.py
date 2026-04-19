@@ -1,8 +1,17 @@
+"""Cross-encoder reranker implementations used after candidate retrieval."""
+
 from .interfaces import BaseReranker
 
 
 class Gemma2BReranker(BaseReranker):
+    """Gemma-based generative reranker producing Yes/No relevance logits."""
+
     def __init__(self, model_name: str = "BAAI/bge-reranker-v2-gemma"):
+        """Load tokenizer and causal LM weights for reranking.
+
+        Args:
+            model_name: Hugging Face model id for the reranker.
+        """
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -18,6 +27,15 @@ class Gemma2BReranker(BaseReranker):
         self.yes_loc = self.tokenizer("Yes", add_special_tokens=False)["input_ids"][0]
 
     def _get_inputs(self, pairs: list[tuple[str, str]], max_length: int = 1024):
+        """Build padded model inputs for query/passage pairs.
+
+        Args:
+            pairs: Query/passage text pairs.
+            max_length: Maximum token budget for one encoded pair.
+
+        Returns:
+            Tokenizer batch dictionary as PyTorch tensors.
+        """
         prompt = "Given a query A and a passage B, determine whether the passage contains an answer to the query by providing a prediction of either 'Yes' or 'No'."
         sep = "\n"
         prompt_inputs = self.tokenizer(
@@ -71,6 +89,7 @@ class Gemma2BReranker(BaseReranker):
         )
 
     def _last_logit_pool(self, logits, attention_mask):
+        """Select final-token logits for each sequence in a padded batch."""
         left_padding = attention_mask[:, -1].sum() == attention_mask.shape[0]
         if left_padding:
             return logits[:, -1]
@@ -84,6 +103,16 @@ class Gemma2BReranker(BaseReranker):
     def rerank(
         self, query: str, doc_indices: list[int], corpus: list[str]
     ) -> list[tuple[int, float]]:
+        """Rerank candidate documents by the model's Yes-token score.
+
+        Args:
+            query: Query text.
+            doc_indices: Candidate document indices.
+            corpus: Document text corpus aligned to indices.
+
+        Returns:
+            Candidate indices paired with scores sorted descending.
+        """
         pairs = [[query, corpus[doc_id]] for doc_id in doc_indices]
         inputs = self._get_inputs(pairs).to(self.model.device)
 
@@ -100,26 +129,42 @@ class Gemma2BReranker(BaseReranker):
 
 
 class NemotronReranker(BaseReranker):
+    """Sequence-classification reranker backed by Nemotron model weights."""
+
     def __init__(
         self,
-        model_name: str = "nvidia/llama-nemotron-rerank-vl-1b-v2",
-        max_length: int = 8192,
+        model_name: str = "nvidia/llama-nemotron-rerank-1b-v2",
+        max_length: int = 2048,
     ):
+        """Store model settings and defer heavy loading until first use.
+
+        Args:
+            model_name: Hugging Face model id for the reranker.
+            max_length: Maximum sequence length for tokenizer truncation.
+        """
         self.model_name = model_name
         self.max_length = max_length
         self.model = None
-        self.processor = None
+        self.tokenizer = None
 
     def _ensure_loaded(self):
+        """Lazily load tokenizer/model weights onto available GPU resources."""
         if self.model is not None:
             return
 
         import torch
-        from transformers import AutoModelForSequenceClassification, AutoProcessor
+        from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
         self.torch = torch
 
         print(f"Loading Cross-Encoder Reranker ({self.model_name}) to GPU...")
+
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.model_name, trust_remote_code=True, padding_side="left"
+        )
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+
         self.model = AutoModelForSequenceClassification.from_pretrained(
             self.model_name,
             torch_dtype=torch.bfloat16,
@@ -127,32 +172,46 @@ class NemotronReranker(BaseReranker):
             device_map="auto",
         ).eval()
 
-        self.processor = AutoProcessor.from_pretrained(
-            self.model_name,
-            trust_remote_code=True,
-            rerank_max_length=self.max_length,
-        )
+        if self.model.config.pad_token_id is None:
+            self.model.config.pad_token_id = self.tokenizer.eos_token_id
 
     def rerank(
         self, query: str, doc_indices: list[int], corpus: list[str]
     ) -> list[tuple[int, float]]:
+        """Rerank candidate documents by sequence-classification logits.
+
+        Args:
+            query: Query text.
+            doc_indices: Candidate document indices.
+            corpus: Document text corpus aligned to indices.
+
+        Returns:
+            Candidate indices paired with scores sorted descending.
+        """
         self._ensure_loaded()
 
-        examples = [
-            {"question": query, "doc_text": corpus[doc_id], "doc_image": ""}
-            for doc_id in doc_indices
+        texts = [
+            f"question:{query} \n \n passage:{corpus[doc_id]}" for doc_id in doc_indices
         ]
 
-        batch_dict = self.processor.process_queries_documents_crossencoder(examples)
-        batch_dict = {
-            k: v.to(self.model.device) if isinstance(v, self.torch.Tensor) else v
-            for k, v in batch_dict.items()
-        }
+        batch_dict = self.tokenizer(
+            texts,
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+            max_length=self.max_length,
+        )
+
+        batch_dict = {k: v.to(self.model.device) for k, v in batch_dict.items()}
 
         with self.torch.inference_mode():
-            logits = self.model(**batch_dict, return_dict=True).logits.squeeze(-1)
-            scores = logits.cpu().float().tolist()
+            logits = self.model(**batch_dict).logits
+            scores = logits.view(-1).cpu().float().tolist()
+
+        if not isinstance(scores, list):
+            scores = [scores]
 
         results = list(zip(doc_indices, scores))
         results.sort(key=lambda x: x[1], reverse=True)
+
         return results
