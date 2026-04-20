@@ -13,9 +13,9 @@ from collections import defaultdict
 
 # Config
 EXPERIMENT_COUNT = 18
-LANG = "fr"
+LANG = "en"
 LOG_FILE = f"manual_research/research_results_{LANG}.tsv"
-PERCENT = 10
+PERCENT = 5
 TOP_K = 50
 K_VALUES = [3, 5, 25, 50]
 
