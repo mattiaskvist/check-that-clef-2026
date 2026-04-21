@@ -19,8 +19,8 @@ PERCENT = 5
 TOP_K = 50
 K_VALUES = [3, 5, 25, 50]
 
-K1 = 2.0
-B = 1.0
+K1 = 2.25
+B = 0.9
 
 SEEDS = list(range(1, 11))
 
@@ -59,7 +59,7 @@ def build_article(row):
     abstract = row.get("abstract") or ""
     venue = row.get("venue") or ""
 
-    return " ".join([title, title, title, venue, venue, abstract])
+    return " ".join([title, title, title, title, title, title, title, venue, venue, abstract])
 
 
 # Load datasets
