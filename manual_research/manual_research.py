@@ -12,45 +12,54 @@ from collections import defaultdict, Counter
 
 
 # Config
-EXPERIMENT_COUNT = 24
 LANG = "en"
 LOG_FILE = f"manual_research/research_results_{LANG}.tsv"
 
-PERCENT = 5
-TOP_K = 50
-K_VALUES = [3,5,25,50]
-
-K1 = 2.25
-B = 0.9
-
-# diffusion
-DIFFUSION_STEPS = 2
-DIFFUSION_DECAY = 0.65
-DIFF_NEIGHBORS = 6
-
-# pseudo relevance feedback
-PRF_DOCS = 7
-PRF_TERMS = 8
-PRF_WEIGHT = 0.85
-
-SEEDS = list(range(1,11))
-
-WINDOW_SIZE = 5
-
-TRANSLATE_TABLE = str.maketrans(string.punctuation," "*len(string.punctuation))
-
+TRANSLATE_TABLE = str.maketrans(string.punctuation, " " * len(string.punctuation))
 stemmer = LancasterStemmer()
 
-LANG_NLTK = "english" if LANG == "en" else ("german" if LANG == "de" else "french")
+# language switch
+USE_ADVANCED = (LANG == "en")
+
+if LANG == "en":
+    EXPERIMENT_COUNT = 24
+    PERCENT = 5
+    K1 = 2.25
+    B = 0.9
+    DIFFUSION_STEPS = 2
+    DIFFUSION_DECAY = 0.65
+    DIFF_NEIGHBORS = 6
+    PRF_DOCS = 7
+    PRF_TERMS = 8
+    PRF_WEIGHT = 0.85
+else:
+    EXPERIMENT_COUNT = 18
+    PERCENT = 10
+    K1 = 2.0
+    B = 1.0
+
+TOP_K = 50
+K_VALUES = [3, 5, 25, 50]
+SEEDS = list(range(1, 11))
+WINDOW_SIZE = 5
+
+
+# stopwords
+if LANG == "en":
+    LANG_NLTK = "english"
+elif LANG == "de":
+    LANG_NLTK = "german"
+else:
+    LANG_NLTK = "french"
 
 try:
-    LANG_STOPWORDS = set(stopwords.words(LANG_NLTK))
+    STOPWORDS = set(stopwords.words(LANG_NLTK))
 except:
     nltk.download("stopwords")
-    LANG_STOPWORDS = set(stopwords.words(LANG_NLTK))
+    STOPWORDS = set(stopwords.words(LANG_NLTK))
 
 
-# Tokenization function
+# tokenization
 def tokenize(text):
 
     text = text.lower().translate(TRANSLATE_TABLE)
@@ -58,29 +67,27 @@ def tokenize(text):
     tokens = [
         stemmer.stem(t)
         for t in text.split()
-        if t not in LANG_STOPWORDS and len(t) > 1
+        if t not in STOPWORDS and len(t) > 1
     ]
 
     if len(tokens) > 1:
-        tokens += [a+"_"+b for a,b in zip(tokens[:-1],tokens[1:])]
+        tokens += [a + "_" + b for a, b in zip(tokens[:-1], tokens[1:])]
 
     return tokens
 
 
-# Article building function
+# article builder
 def build_article(row):
 
     title = row.get("title") or ""
     abstract = row.get("abstract") or ""
     venue = row.get("venue") or ""
 
-    return " ".join([title,title,title,venue,venue,abstract])
+    return " ".join([title, title, title, venue, venue, abstract])
 
 
-# Load datasets
+# load data
 def load_data():
-
-    print("Loading datasets...")
 
     collection = load_dataset(
         "sschellhammer/CT26_Task1_SourceRetrievalForScientificWebClaims",
@@ -95,94 +102,111 @@ def load_data():
     return collection.to_list(), data["train"].to_list()
 
 
-# Build corpus
+# corpus
 def build_corpus(records):
 
     docs = []
     pubkeys = []
 
     for r in records:
-
         docs.append(tokenize(build_article(r)))
         pubkeys.append(r["pubkey"])
 
     return docs, np.array(pubkeys)
 
-# Translate tweets if needed
+
+# translate tweets
 def translate_tweets_if_needed(tweets):
 
-    if LANG not in ("de","fr"):
+    if LANG not in ("de", "fr"):
         return tweets
 
-    print(f"Translating {len(tweets)} tweets")
+    translator = GoogleTranslator(source=LANG, target="en")
 
-    translator = GoogleTranslator(source=LANG,target="en")
+    for t in tqdm(tweets, desc="Translating"):
 
-    for t in tqdm(tweets,desc="Translating"):
-
-        text = t["text"]
-
-        if len(text)>5000:
-            text=text[:5000]
+        text = t["text"][:5000]
 
         try:
-            t["text"]=translator.translate(text)
+            t["text"] = translator.translate(text)
         except:
-            t["text"]=text
+            t["text"] = text
 
     return tweets
 
 
-# Build term graph (weighted)
+# diffusion (only EN)
 def build_term_graph(docs):
 
     term_graph = defaultdict(Counter)
 
-    for doc in tqdm(docs, desc="Building term graph"):
+    for doc in tqdm(docs, desc="Term graph"):
 
-        for i,t in enumerate(doc):
+        for i, t in enumerate(doc):
 
             window = doc[i+1:i+WINDOW_SIZE]
 
             for w in window:
-
                 if t == w:
                     continue
-
                 term_graph[t][w] += 1
                 term_graph[w][t] += 1
 
     return term_graph
 
 
-# BM25 core
+def diffusion_expand(tokens, term_graph):
+
+    weights = Counter({t: 1.0 for t in tokens})
+
+    for _ in range(DIFFUSION_STEPS):
+
+        new_weights = Counter()
+
+        for t, w in weights.items():
+
+            neighbors = term_graph.get(t)
+            if not neighbors:
+                continue
+
+            total = sum(neighbors.values()) + 1e-9
+
+            for n, c in neighbors.most_common(DIFF_NEIGHBORS):
+                new_weights[n] += w * (c / total) * DIFFUSION_DECAY
+
+        weights.update(new_weights)
+
+    return weights
+
+
+# BM25
 class FastBM25:
-    def __init__(self,docs):
 
-        self.docs = docs
+    def __init__(self, docs):
+
         self.N = len(docs)
-
         self.doc_len = np.array([len(d) for d in docs])
         self.avgdl = self.doc_len.mean()
 
         self.index = defaultdict(list)
         self.df = defaultdict(int)
 
-        for doc_id,doc in enumerate(docs):
+        for doc_id, doc in enumerate(docs):
 
-            f = Counter(doc)
+            freqs = defaultdict(int)
+            for t in doc:
+                freqs[t] += 1
 
-            for t,tf in f.items():
-                self.index[t].append((doc_id,tf))
+            for t, tf in freqs.items():
+                self.index[t].append((doc_id, tf))
                 self.df[t] += 1
 
         self.idf = {
-            t: np.log(1 + (self.N - df + 0.5)/(df + 0.5))
-            for t,df in self.df.items()
+            t: np.log(1 + (self.N - df + 0.5) / (df + 0.5))
+            for t, df in self.df.items()
         }
 
-
-    def get_scores(self,query):
+    def get_scores(self, query):
 
         scores = defaultdict(float)
 
@@ -193,137 +217,99 @@ class FastBM25:
 
             idf = self.idf[t]
 
-            for doc_id,tf in self.index[t]:
+            for doc_id, tf in self.index[t]:
 
-                denom = tf + K1*(1 - B + B*self.doc_len[doc_id]/self.avgdl)
+                denom = tf + K1 * (1 - B + B * self.doc_len[doc_id] / self.avgdl)
 
-                scores[doc_id] += idf * (tf * (K1+1) / denom)
+                scores[doc_id] += idf * (tf * (K1 + 1) / denom)
 
         return scores
 
 
-# Diffusion (soft probability expansion)
-def diffusion_expand(tokens, term_graph):
-
-    weights = Counter({t:1.0 for t in tokens})
-
-    for _ in range(DIFFUSION_STEPS):
-
-        new_weights = Counter()
-
-        for t,w in weights.items():
-
-            neighbors = term_graph.get(t)
-            if not neighbors:
-                continue
-
-            total = sum(neighbors.values()) + 1e-9
-
-            for n,c in neighbors.most_common(DIFF_NEIGHBORS):
-
-                new_weights[n] += w * (c / total) * DIFFUSION_DECAY
-
-        weights.update(new_weights)
-
-    return weights
-
-
-# PRF (true weighted centroid model)
-def pseudo_relevance_expand(top_docs, docs, scores):
-
-    ranked = sorted(scores.items(), key=lambda x:x[1], reverse=True)[:PRF_DOCS]
-
-    counter = Counter()
-
-    for doc_id,_ in ranked:
-
-        for t in docs[doc_id]:
-            counter[t] += 1
-
-    total = sum(counter.values()) + 1e-9
-
-    return {t: c/total for t,c in counter.most_common(PRF_TERMS)}
-
-
-# Preprocess queries
+# queries
 def preprocess_queries(tweets):
 
     return [
-        (tokenize(t["text"]),t["pubkey"])
-        for t in tqdm(tweets,desc="Tokenizing queries")
+        (tokenize(t["text"]), t["pubkey"])
+        for t in tqdm(tweets, desc="Queries")
     ]
 
 
-# Rank query (fully fused model)
+# ranking
 def rank_query(tokens, bm25, term_graph, docs):
 
-    base_scores = bm25.get_scores(tokens)
+    scores = bm25.get_scores(tokens)
 
-    if not base_scores:
+    if not scores:
         return []
 
-    diff = diffusion_expand(tokens, term_graph)
+    # diffusion only EN
+    if USE_ADVANCED:
 
-    for t,w in diff.items():
+        diff = diffusion_expand(tokens, term_graph)
 
-        if t not in bm25.index:
-            continue
+        for t, w in diff.items():
+            if t not in bm25.index:
+                continue
+            for doc_id, _ in bm25.index[t]:
+                scores[doc_id] += w
 
-        for doc_id,_ in bm25.index[t]:
-            base_scores[doc_id] += w
+        doc_ids = np.fromiter(scores.keys(), dtype=int)
+        vals = np.fromiter(scores.values(), dtype=float)
 
-    doc_ids = np.fromiter(base_scores.keys(),dtype=int)
-    vals = np.fromiter(base_scores.values(),dtype=float)
+        k = min(TOP_K, len(vals))
+        top_idx = np.argpartition(vals, -k)[-k:]
+        top_idx = top_idx[np.argsort(vals[top_idx])[::-1]]
 
-    k = min(TOP_K,len(vals))
+        top_docs = doc_ids[top_idx]
 
-    top_idx = np.argpartition(vals,-k)[-k:]
-    top_idx = top_idx[np.argsort(vals[top_idx])[::-1]]
+        # PRF
+        counter = Counter()
 
-    top_docs = doc_ids[top_idx]
+        for doc_id in top_docs:
+            for t in docs[doc_id]:
+                counter[t] += 1
 
-    prf = pseudo_relevance_expand(top_docs, docs, base_scores)
+        total = sum(counter.values()) + 1e-9
 
-    for t,w in prf.items():
+        for t, c in counter.most_common(8):
+            if t not in bm25.index:
+                continue
+            w = (c / total)
+            for doc_id, _ in bm25.index[t]:
+                scores[doc_id] += PRF_WEIGHT * w
 
-        if t not in bm25.index:
-            continue
+    # normalize
+    mx = max(scores.values()) + 1e-9
+    for k in scores:
+        scores[k] /= mx
 
-        for doc_id,_ in bm25.index[t]:
-            base_scores[doc_id] += PRF_WEIGHT * w
+    doc_ids = np.fromiter(scores.keys(), dtype=int)
+    vals = np.fromiter(scores.values(), dtype=float)
 
-    # final normalization (IMPORTANT)
-    mx = max(base_scores.values()) + 1e-9
-    for k in base_scores:
-        base_scores[k] /= mx
-
-    doc_ids = np.fromiter(base_scores.keys(),dtype=int)
-    vals = np.fromiter(base_scores.values(),dtype=float)
-
-    k = min(TOP_K,len(vals))
-
-    top_idx = np.argpartition(vals,-k)[-k:]
+    k = min(TOP_K, len(vals))
+    top_idx = np.argpartition(vals, -k)[-k:]
     top_idx = top_idx[np.argsort(vals[top_idx])[::-1]]
 
     return doc_ids[top_idx]
 
 
-# Evaluation
+# evaluation
 def evaluate_seed(args):
 
-    seed,queries,bm25,pubkeys,term_graph,docs,counter = args
+    seed, queries, bm25, pubkeys, term_graph, docs, counter = args
 
     rng = random.Random(seed)
 
-    sample_size = max(1,int(len(queries)*(PERCENT/100)))
-    sampled = rng.sample(queries,sample_size)
+    sample_size = max(1, int(len(queries) * (PERCENT / 100)))
+    sampled = rng.sample(queries, sample_size)
 
-    results = {k:0 for k in K_VALUES}
+    results = {k: 0 for k in K_VALUES}
     mrr = []
 
-    for tokens,label in sampled:
+    for tokens, label in sampled:
 
-        top = rank_query(tokens,bm25,term_graph,docs)
+        top = rank_query(tokens, bm25, term_graph, docs)
         retrieved = pubkeys[top]
 
         for k in K_VALUES:
@@ -331,113 +317,91 @@ def evaluate_seed(args):
                 results[k] += 1
 
         pos = np.where(retrieved[:5] == label)[0]
-        mrr.append(1/(pos[0]+1) if len(pos) else 0)
+        mrr.append(1 / (pos[0] + 1) if len(pos) else 0)
 
         counter.value += 1
 
     for k in results:
         results[k] /= len(sampled)
 
-    return results,np.mean(mrr)
+    return results, np.mean(mrr)
 
 
-# Experiment runner
-def run_experiment(bm25,queries,pubkeys,term_graph,docs):
+# runner
+def run_experiment(bm25, queries, pubkeys, term_graph, docs):
 
     manager = Manager()
-    counter = manager.Value("i",0)
+    counter = manager.Value("i", 0)
 
     args = [
-        (s,queries,bm25,pubkeys,term_graph,docs,counter)
+        (s, queries, bm25, pubkeys, term_graph, docs, counter)
         for s in SEEDS
     ]
 
-    total_queries = int(len(queries)*(PERCENT/100))*len(SEEDS)
+    total = int(len(queries) * (PERCENT / 100)) * len(SEEDS)
 
-    progress = tqdm(total=total_queries,desc="Evaluating",unit="q")
+    progress = tqdm(total=total, desc="Eval", unit="q")
 
-    recall_results = {k:[] for k in K_VALUES}
+    recall_results = {k: [] for k in K_VALUES}
     mrr_results = []
 
     with Pool(cpu_count()) as pool:
 
-        result_iter = pool.imap_unordered(evaluate_seed,args)
+        for res, mrr in pool.imap_unordered(evaluate_seed, args):
 
-        last = 0
+            for k, v in res.items():
+                recall_results[k].append(v)
 
-        while True:
-
-            try:
-                res,mrr = next(result_iter)
-
-                for k,v in res.items():
-                    recall_results[k].append(v)
-
-                mrr_results.append(mrr)
-
-            except StopIteration:
-                break
-
-            current = counter.value
-            progress.update(current-last)
-            last = current
+            mrr_results.append(mrr)
 
     progress.close()
 
-    return recall_results,mrr_results
+    return recall_results, mrr_results
 
 
-# Summary
-def summarize(recall_results,mrr_results):
-
-    recall3_mean,recall3_std = np.mean(recall_results[3]),np.std(recall_results[3])
-    recall5_mean,recall5_std = np.mean(recall_results[5]),np.std(recall_results[5])
-    recall25_mean,recall25_std = np.mean(recall_results[25]),np.std(recall_results[25])
-    recall50_mean,recall50_std = np.mean(recall_results[50]),np.std(recall_results[50])
-    mrr_mean,mrr_std = np.mean(mrr_results),np.std(mrr_results)
+# summary
+def summarize(recall_results, mrr_results):
 
     print("\n===== FINAL RESULTS =====")
 
-    print(f"Recall@3: {recall3_mean:.4f} ± {recall3_std:.4f}")
-    print(f"Recall@5: {recall5_mean:.4f} ± {recall5_std:.4f}")
-    print(f"Recall@25: {recall25_mean:.4f} ± {recall25_std:.4f}")
-    print(f"Recall@50: {recall50_mean:.4f} ± {recall50_std:.4f}")
-    print(f"MRR@5: {mrr_mean:.4f} ± {mrr_std:.4f}")
+    for k in K_VALUES:
+        print(f"Recall@{k}: {np.mean(recall_results[k]):.4f} ± {np.std(recall_results[k]):.4f}")
+
+    print(f"MRR@5: {np.mean(mrr_results):.4f} ± {np.std(mrr_results):.4f}")
 
     log_line = (
         f"{EXPERIMENT_COUNT}\t"
-        f"{recall3_mean:.4f}±{recall3_std:.4f}\t"
-        f"{recall5_mean:.4f}±{recall5_std:.4f}\t"
-        f"{recall25_mean:.4f}±{recall25_std:.4f}\t"
-        f"{recall50_mean:.4f}±{recall50_std:.4f}\t"
-        f"{mrr_mean:.4f}±{mrr_std:.4f}\n"
+        f"{np.mean(recall_results[3]):.4f}\t"
+        f"{np.mean(recall_results[5]):.4f}\t"
+        f"{np.mean(recall_results[25]):.4f}\t"
+        f"{np.mean(recall_results[50]):.4f}\t"
+        f"{np.mean(mrr_results):.4f}\n"
     )
 
-    with open(LOG_FILE,"a") as f:
+    with open(LOG_FILE, "a") as f:
         f.write(log_line)
 
 
-# Main
+# main
 def main():
 
     nltk.download("stopwords")
 
-    collection,tweets = load_data()
+    collection, tweets = load_data()
 
     tweets = translate_tweets_if_needed(tweets)
 
-    docs,pubkeys = build_corpus(collection)
+    docs, pubkeys = build_corpus(collection)
 
-    term_graph = build_term_graph(docs)
+    term_graph = build_term_graph(docs) if USE_ADVANCED else None
 
-    print("Building BM25 index...")
     bm25 = FastBM25(docs)
 
     queries = preprocess_queries(tweets)
 
-    recall,mrr = run_experiment(bm25,queries,pubkeys,term_graph,docs)
+    recall, mrr = run_experiment(bm25, queries, pubkeys, term_graph, docs)
 
-    summarize(recall,mrr)
+    summarize(recall, mrr)
 
 
 if __name__ == "__main__":
