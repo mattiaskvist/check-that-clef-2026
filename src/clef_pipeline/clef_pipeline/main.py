@@ -2,7 +2,6 @@
 
 import modal
 
-from .fusions import RandomForestFuser
 from .logging_utils import StageTimer, get_logger
 from .metrics import EvaluationMetrics
 from .pipeline_config import build_pipeline_config
@@ -122,7 +121,7 @@ def evaluate_pipeline(
 
     timer = StageTimer()
     split = normalize_split(split)
-    
+
     sparse_k1 = 1.5 if sparse_vanilla else 2.5
     sparse_b = 0.75 if sparse_vanilla else 0.85
     sparse_use_bigrams = not sparse_vanilla
@@ -344,6 +343,7 @@ def main(
 
     if metrics_output_file:
         import json
+
         with open(metrics_output_file, "w") as f:
             json.dump(run_output["global_results"], f, indent=2)
         print(f"Saved metrics to {metrics_output_file}")
