@@ -116,17 +116,17 @@ def evaluate_pipeline(
     from datasets import load_dataset
     from tqdm import tqdm
 
+    import os
     timer = StageTimer()
     split = normalize_split(split)
-    config = build_pipeline_config("evaluation", fusion_method=fusion_method)
+    config = build_pipeline_config(
+        "evaluation",
+        fusion_method=fusion_method,
+        global_fusion_model=global_fusion_model,
+        hf_fusion_repo_id=hf_fusion_repo_id,
+        hf_token=os.environ.get("HF_TOKEN"),
+    )
     pipeline = build_pipeline_from_config(config)
-    if config.fusion_method == "random_forest":
-        import os
-        pipeline.fuser = RandomForestFuser(
-            global_model=global_fusion_model,
-            hf_repo_id=hf_fusion_repo_id,
-            hf_token=os.environ.get("HF_TOKEN"),
-        )
 
     logger.info("Loading collection and building index...")
     collection_dataset = load_dataset(
@@ -155,15 +155,14 @@ def evaluate_pipeline(
         )
         embedding_cache.commit()
 
-    if config.fusion_method == "random_forest":
-        pipeline.prepare_fusion_model(
-            cache_dir=CACHE_MOUNT,
-            languages=languages,
-            force_retrain_fusion=force_retrain_fusion,
-            force_recompute_dense_queries=force_recompute_dense_queries,
-            force_recompute_sparse_cache=force_recompute_sparse_cache,
-            on_cache_update=embedding_cache.commit,
-        )
+    pipeline.prepare_fusion_model(
+        cache_dir=CACHE_MOUNT,
+        languages=languages,
+        force_retrain_fusion=force_retrain_fusion,
+        force_recompute_dense_queries=force_recompute_dense_queries,
+        force_recompute_sparse_cache=force_recompute_sparse_cache,
+        on_cache_update=embedding_cache.commit,
+    )
 
     pipeline.unload_dense_models()
 
