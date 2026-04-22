@@ -7,6 +7,8 @@ from .pipeline_config import PipelineConfig
 from .rerankers import Gemma2BReranker, NemotronReranker
 from .retrievers import BGEM3Retriever, HarrierRetriever, SparseRetriever
 
+BGE_M3_LORA_ID = "boyes-boys-clef-2026/bge-m3-checkthat-finetuned"
+
 
 def create_retriever(name: str, params: dict | None = None):
     """Instantiate a retriever by registry name.
@@ -33,7 +35,8 @@ def create_retriever(name: str, params: dict | None = None):
     if name == "harrier-27b":
         return HarrierRetriever(**params)
     if name == "bge-m3":
-        return BGEM3Retriever(**params)
+        bge_params = {"lora_id": BGE_M3_LORA_ID, **params}
+        return BGEM3Retriever(**bge_params)
     raise ValueError(f"Unknown retriever: {name}")
 
 
