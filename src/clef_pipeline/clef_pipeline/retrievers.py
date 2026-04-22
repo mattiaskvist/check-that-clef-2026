@@ -444,8 +444,10 @@ class SparseRetriever(BaseRetriever):
 
     def _cache_key(self) -> str:
         """Build cache namespace identifier for sparse retrieval settings."""
-        bigrams_val = 1 if self.use_bigrams else 0
-        trans_val = "v1" if self.use_translation else "none"
+        use_bigrams = getattr(self, "use_bigrams", True)
+        use_translation = getattr(self, "use_translation", True)
+        bigrams_val = 1 if use_bigrams else 0
+        trans_val = "v1" if use_translation else "none"
         return (
             f"bm25plus-k1_{self.bm25_k1:.2f}-b_{self.bm25_b:.2f}"
             f"-stem_lancaster-bigrams_{bigrams_val}-translate_{trans_val}"
@@ -525,7 +527,7 @@ class SparseRetriever(BaseRetriever):
             translated_query = self._translate_query(query, lang)
         else:
             translated_query = query
-            
+
         tokenized_query = self.tokenize(translated_query)
         scores = np.asarray(
             self.bm25_model.get_scores(tokenized_query), dtype=np.float32

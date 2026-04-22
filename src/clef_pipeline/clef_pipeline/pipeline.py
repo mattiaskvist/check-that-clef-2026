@@ -42,7 +42,6 @@ class RetrievalPipeline:
             self.fuser = RRFFuser()
         elif self.config.fusion_method == "random_forest":
             self.fuser = RandomForestFuser(
-                global_model=self.config.global_fusion_model,
                 hf_repo_id=self.config.hf_fusion_repo_id,
                 hf_token=self.config.hf_token,
             )

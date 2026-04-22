@@ -33,7 +33,6 @@ class PipelineConfig:
     fusion_top_k: int = 30
     sparse_cache_top_k: int = 2000
     final_top_k: int = 5
-    global_fusion_model: bool = False
     hf_fusion_repo_id: str | None = None
     hf_token: str | None = None
 
@@ -45,7 +44,6 @@ class PipelineConfig:
 def build_pipeline_config(
     profile: str = "demo",
     fusion_method: str = "rrf",
-    global_fusion_model: bool = False,
     hf_fusion_repo_id: str | None = None,
     hf_token: str | None = None,
     dense_model: str = "harrier-27b",
@@ -96,7 +94,6 @@ def build_pipeline_config(
             fusion_top_k=30,
             sparse_cache_top_k=2000,
             final_top_k=5,
-            global_fusion_model=global_fusion_model,
             hf_fusion_repo_id=hf_fusion_repo_id,
             hf_token=hf_token,
         )
@@ -113,7 +110,6 @@ def build_pipeline_config(
             fusion_top_k=30,
             sparse_cache_top_k=2000,
             final_top_k=5,
-            global_fusion_model=global_fusion_model,
             hf_fusion_repo_id=hf_fusion_repo_id,
             hf_token=hf_token,
         )
@@ -130,7 +126,6 @@ def build_pipeline_config(
             fusion_top_k=30,
             sparse_cache_top_k=2000,
             final_top_k=5,
-            global_fusion_model=global_fusion_model,
             hf_fusion_repo_id=hf_fusion_repo_id,
             hf_token=hf_token,
         )
@@ -147,7 +142,6 @@ def build_pipeline_config(
             fusion_top_k=30,
             sparse_cache_top_k=2000,
             final_top_k=5,
-            global_fusion_model=global_fusion_model,
             hf_fusion_repo_id=hf_fusion_repo_id,
             hf_token=hf_token,
         )
