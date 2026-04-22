@@ -45,6 +45,24 @@ uv run hf auth login
 - `src/clef_training/` — training and hard-negative-mining scripts for dense retrieval model development
 - `tests/` — regression and modular pipeline tests for retrieval, metrics, configs, and demo integration
 
+## Configuration Profiles
+
+The pipeline uses preset profiles defined in `src/clef_pipeline/clef_pipeline/pipeline_config.py` to specify combinations of retrievers, rerankers, and fusion strategies. You can switch or customize these to experiment with different models.
+
+### Built-in Profiles
+
+- `demo`: Lightweight profile using a small dense retriever (`harrier-270m`), a sparse retriever (`sparse`), and the `nemotron` reranker. Recommended for fast local testing.
+- `evaluation`: Heavyweight profile using a large dense retriever (`harrier-27b`), a sparse retriever (`sparse`), and the `nemotron` reranker.
+- `retrieval-only`: Uses `harrier-270m` and `sparse`, but completely disables the cross-encoder reranking step.
+
+### Customizing Components
+
+To change components, edit the list of `RetrieverConfig` or `RerankerConfig` within `build_pipeline_config()` in `pipeline_config.py`. 
+You can mix and match the available models:
+- **Retrievers:** `harrier-270m`, `harrier-27b`, `bge-m3`, `sparse`
+- **Rerankers:** `nemotron`, `gemma2b`
+- **Fusion Methods:** `rrf` (Reciprocal Rank Fusion), `random_forest` (Learned RF Classifier)
+
 ## Modal commands
 
 ```bash
