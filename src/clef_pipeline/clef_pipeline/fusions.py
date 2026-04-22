@@ -207,6 +207,8 @@ class RandomForestFuser(BaseFuser):
         global_model: bool = False,
         rf_params: dict | None = None,
         candidate_top_k: int = 500,
+        hf_repo_id: str | None = None,
+        hf_token: str | None = None,
     ):
         """
         Args:
@@ -215,6 +217,8 @@ class RandomForestFuser(BaseFuser):
             rf_params: Override RF hyperparameters. Merges with defaults.
             candidate_top_k: How many candidates per retriever to consider
                 when building the union set during training.
+            hf_repo_id: Hugging Face repository ID to push/pull models from.
+            hf_token: Optional Hugging Face token.
         """
         self.global_model = global_model
         self.candidate_top_k = candidate_top_k
@@ -222,6 +226,8 @@ class RandomForestFuser(BaseFuser):
         self.models: dict[str, object] = {}  # lang -> trained RF (or "global" key)
         self._trained = False
         self._fingerprint: str | None = None
+        self.hf_repo_id = hf_repo_id
+        self.hf_token = hf_token
 
     # -- Cache fingerprint --------------------------------------------------
 
@@ -259,7 +265,7 @@ class RandomForestFuser(BaseFuser):
     # -- Save / Load --------------------------------------------------------
 
     def save(self, cache_dir: str) -> str:
-        """Pickle trained models to cache_dir. Returns the written path."""
+        """Pickle trained models to cache_dir and upload to Hugging Face if configured. Returns the written path."""
         path = self._cache_path(cache_dir)
         payload = {
             "models": self.models,
@@ -270,7 +276,22 @@ class RandomForestFuser(BaseFuser):
         }
         with open(path, "wb") as f:
             pickle.dump(payload, f)
-        print(f"[RF Fuser] Saved trained models to {path}")
+        print(f"[RF Fuser] Saved trained models locally to {path}")
+
+        if self.hf_repo_id:
+            from huggingface_hub import HfApi
+            api = HfApi(token=self.hf_token)
+            api.create_repo(repo_id=self.hf_repo_id, exist_ok=True, repo_type="model")
+            filename = f"rf_{self._fingerprint}.pkl"
+            print(f"[RF Fuser] Uploading to Hugging Face: {self.hf_repo_id}/{filename}")
+            api.upload_file(
+                path_or_fileobj=path,
+                path_in_repo=filename,
+                repo_id=self.hf_repo_id,
+                repo_type="model",
+            )
+            print("[RF Fuser] Upload complete.")
+
         return path
 
     def load(
@@ -280,7 +301,7 @@ class RandomForestFuser(BaseFuser):
         sparse_config: dict,
         train_split: str = "train",
     ) -> bool:
-        """Try loading cached models. Returns True if successful."""
+        """Try loading cached models from Hugging Face or locally. Returns True if successful."""
         self._fingerprint = self._compute_fingerprint(
             dense_model_name,
             sparse_config,
@@ -290,9 +311,29 @@ class RandomForestFuser(BaseFuser):
             self.candidate_top_k,
         )
         path = self._cache_path(cache_dir)
-        if not os.path.exists(path):
+        
+        if self.hf_repo_id:
+            from huggingface_hub import hf_hub_download
+            from huggingface_hub.utils import EntryNotFoundError, RepositoryNotFoundError
+            filename = f"rf_{self._fingerprint}.pkl"
+            try:
+                print(f"[RF Fuser] Attempting to download {filename} from {self.hf_repo_id}...")
+                path = hf_hub_download(
+                    repo_id=self.hf_repo_id,
+                    filename=filename,
+                    token=self.hf_token,
+                    cache_dir=os.path.join(cache_dir, "hf_hub"),
+                )
+            except (EntryNotFoundError, RepositoryNotFoundError):
+                print(f"[RF Fuser] File {filename} not found in repository {self.hf_repo_id}.")
+                return False
+            except Exception as e:
+                print(f"[RF Fuser] Failed to download from Hugging Face: {e}")
+                return False
+        elif not os.path.exists(path):
             print(f"[RF Fuser] No cached model at {path}")
             return False
+
         with open(path, "rb") as f:
             payload = pickle.load(f)
         self.models = payload["models"]

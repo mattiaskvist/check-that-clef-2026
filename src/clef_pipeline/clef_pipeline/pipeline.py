@@ -428,3 +428,87 @@ class RetrievalPipeline:
             unload_model = getattr(retriever, "unload_model", None)
             if callable(unload_model):
                 unload_model()
+
+    def prepare_fusion_model(
+        self,
+        cache_dir: str,
+        languages: list[str],
+        force_retrain_fusion: bool = False,
+        force_recompute_dense_queries: bool = False,
+        force_recompute_sparse_cache: bool = False,
+        on_cache_update=None,
+    ):
+        """Load or train the fusion model for all configured languages.
+
+        Args:
+            cache_dir: Cache root path.
+            languages: List of language codes to train for.
+            force_retrain_fusion: Force retraining instead of loading cache.
+            force_recompute_dense_queries: Force recompute dense train queries.
+            force_recompute_sparse_cache: Force recompute sparse train queries.
+            on_cache_update: Callback for when the embedding cache changes.
+        """
+        if self.config.fusion_method != "random_forest":
+            return
+
+        from datasets import load_dataset
+        from .utils import CHECKTHAT_DATASET
+
+        dense_retriever, sparse_retriever = self.get_fusion_retrievers()
+        if not isinstance(self.fuser, RandomForestFuser):
+            raise RuntimeError("Expected RandomForestFuser for random_forest mode.")
+
+        sparse_config = {
+            "k1": getattr(sparse_retriever, "bm25_k1", None),
+            "b": getattr(sparse_retriever, "bm25_b", None),
+            "stemmer": "lancaster",
+        }
+        dense_model_name = getattr(
+            dense_retriever, "model_name", dense_retriever.__class__.__name__
+        )
+
+        loaded = False
+        if not force_retrain_fusion:
+            loaded = self.fuser.load(
+                cache_dir=cache_dir,
+                dense_model_name=dense_model_name,
+                sparse_config=sparse_config,
+                train_split="train",
+            )
+
+        if not loaded:
+            train_tweets_by_lang: dict[str, list[dict]] = {}
+            for lang in languages:
+                train_tweets = list(load_dataset(CHECKTHAT_DATASET, lang)["train"])
+                train_tweets_by_lang[lang] = train_tweets
+                train_query_texts = [row["text"] for row in train_tweets]
+
+                dense_retriever.index_queries(
+                    train_query_texts,
+                    cache_dir=cache_dir,
+                    cache_name=f"queries_train_{lang}",
+                    force_recompute=force_recompute_dense_queries,
+                )
+                sparse_retriever.index_queries(
+                    train_query_texts,
+                    lang=lang,
+                    cache_dir=cache_dir,
+                    cache_name=f"sparse_queries_train_{lang}",
+                    top_k=self.config.sparse_cache_top_k,
+                    force_recompute=force_recompute_sparse_cache,
+                )
+                if on_cache_update is not None:
+                    on_cache_update()
+
+            self.fuser.train(
+                dense_retriever=dense_retriever,
+                sparse_retriever=sparse_retriever,
+                train_tweets_by_lang=train_tweets_by_lang,
+                article_pubkeys=self.article_pubkeys,
+                dense_model_name=dense_model_name,
+                sparse_config=sparse_config,
+                train_split="train",
+            )
+            self.fuser.save(cache_dir=cache_dir)
+            if on_cache_update is not None:
+                on_cache_update()
