@@ -91,7 +91,6 @@ def evaluate_pipeline(
     submission_volume_subdir: str = "submissions",
     fusion_method: str = "rrf",
     force_retrain_fusion: bool = False,
-    global_fusion_model: bool = False,
     hf_fusion_repo_id: str | None = "boyes-boys-clef-2026/random-forest-fuser",
 ):
     """Run the full retrieval evaluation workflow on Modal.
@@ -105,24 +104,22 @@ def evaluate_pipeline(
         submission_volume_subdir: Subdirectory under cache volume for submissions.
         fusion_method: Fusion strategy (``rrf`` or ``random_forest``).
         force_retrain_fusion: Force retraining learned fusion model instead of loading cache.
-        global_fusion_model: Train one fusion model for all languages.
         hf_fusion_repo_id: Hugging Face repository ID to push/pull fusion models.
 
     Returns:
         Global language results and optional submission artifact metadata.
     """
+    import os
     from datetime import datetime, timezone
 
     from datasets import load_dataset
     from tqdm import tqdm
 
-    import os
     timer = StageTimer()
     split = normalize_split(split)
     config = build_pipeline_config(
         "evaluation",
         fusion_method=fusion_method,
-        global_fusion_model=global_fusion_model,
         hf_fusion_repo_id=hf_fusion_repo_id,
         hf_token=os.environ.get("HF_TOKEN"),
     )
@@ -290,7 +287,6 @@ def main(
     submission_download_dir: str = "submissions",
     fusion_method: str = "rrf",
     force_retrain_fusion: bool = False,
-    global_fusion_model: bool = False,
     hf_fusion_repo_id: str | None = "boyes-boys-clef-2026/random-forest-fuser",
 ):
     """Local CLI entrypoint that dispatches Modal evaluation and export.
@@ -314,7 +310,6 @@ def main(
         submission_volume_subdir=submission_volume_subdir,
         fusion_method=fusion_method,
         force_retrain_fusion=force_retrain_fusion,
-        global_fusion_model=global_fusion_model,
         hf_fusion_repo_id=hf_fusion_repo_id,
     )
 
