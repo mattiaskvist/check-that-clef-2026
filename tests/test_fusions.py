@@ -250,7 +250,7 @@ class TestRandomForestFuser:
         sparse = _make_mock_sparse_retriever(n_docs=n_docs)
         tweets, pubkeys = _make_train_tweets(n_docs=n_docs)
 
-        fuser = RandomForestFuser(global_model=False, candidate_top_k=10)
+        fuser = RandomForestFuser(candidate_top_k=10)
         fuser.train(
             dense_retriever=dense,
             sparse_retriever=sparse,
@@ -261,9 +261,6 @@ class TestRandomForestFuser:
         )
 
         assert fuser._trained
-        assert "en" in fuser.models
-        assert "de" in fuser.models
-        assert "fr" in fuser.models
 
         # Fuse for each language
         for lang in ["en", "de", "fr"]:
@@ -290,7 +287,7 @@ class TestRandomForestFuser:
         sparse = _make_mock_sparse_retriever(n_docs=n_docs)
         tweets, pubkeys = _make_train_tweets(n_docs=n_docs)
 
-        fuser = RandomForestFuser(global_model=True, candidate_top_k=10)
+        fuser = RandomForestFuser(candidate_top_k=10)
         fuser.train(
             dense_retriever=dense,
             sparse_retriever=sparse,
@@ -301,7 +298,6 @@ class TestRandomForestFuser:
         )
 
         assert fuser._trained
-        assert "global" in fuser.models
 
         dense_ranks, dense_scores = dense.search_with_scores(0, cache_name="queries_en")
         sparse_ranks, sparse_scores = sparse.search_with_scores(
@@ -322,7 +318,7 @@ class TestRandomForestFuser:
         sparse = _make_mock_sparse_retriever(n_docs=n_docs)
         tweets, pubkeys = _make_train_tweets(n_docs=n_docs)
 
-        fuser = RandomForestFuser(global_model=False, candidate_top_k=10)
+        fuser = RandomForestFuser(candidate_top_k=10)
         fuser.train(
             dense_retriever=dense,
             sparse_retriever=sparse,
@@ -349,7 +345,7 @@ class TestRandomForestFuser:
             saved_path = fuser.save(tmpdir)
             assert os.path.exists(saved_path)
 
-            fuser2 = RandomForestFuser(global_model=False, candidate_top_k=10)
+            fuser2 = RandomForestFuser(candidate_top_k=10)
             loaded = fuser2.load(
                 cache_dir=tmpdir,
                 dense_model_name="mock/dense-v1",
@@ -383,7 +379,6 @@ class TestRandomForestFuser:
             {"k1": 2.5, "b": 0.85, "stemmer": "lancaster"},
             "train",
             {"n_estimators": 100},
-            False,
             500,
         )
         fp2 = RandomForestFuser._compute_fingerprint(
@@ -391,7 +386,6 @@ class TestRandomForestFuser:
             {"k1": 2.5, "b": 0.85, "stemmer": "lancaster"},
             "train",
             {"n_estimators": 100},
-            False,
             500,
         )
         fp3 = RandomForestFuser._compute_fingerprint(
@@ -399,7 +393,6 @@ class TestRandomForestFuser:
             {"k1": 1.5, "b": 0.75, "stemmer": "porter"},
             "train",
             {"n_estimators": 100},
-            False,
             500,
         )
         fp4 = RandomForestFuser._compute_fingerprint(
@@ -407,7 +400,6 @@ class TestRandomForestFuser:
             {"k1": 2.5, "b": 0.85, "stemmer": "lancaster"},
             "train",
             {"n_estimators": 200},
-            False,
             500,
         )
 
