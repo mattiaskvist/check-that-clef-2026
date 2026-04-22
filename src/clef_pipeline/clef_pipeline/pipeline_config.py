@@ -33,6 +33,8 @@ class PipelineConfig:
     fusion_top_k: int = 30
     sparse_cache_top_k: int = 2000
     final_top_k: int = 5
+    hf_fusion_repo_id: str | None = None
+    hf_token: str | None = None
 
     def enabled_retrievers(self) -> list[RetrieverConfig]:
         """Return retriever configs that are enabled."""
@@ -40,7 +42,18 @@ class PipelineConfig:
 
 
 def build_pipeline_config(
-    profile: str = "demo", fusion_method: str = "rrf"
+    profile: str = "demo",
+    fusion_method: str = "rrf",
+    hf_fusion_repo_id: str | None = None,
+    hf_token: str | None = None,
+    dense_model: str = "harrier-27b",
+    disable_sparse: bool = False,
+    reranker_model: str = "nemotron",
+    disable_reranker: bool = False,
+    sparse_k1: float = 2.5,
+    sparse_b: float = 0.85,
+    sparse_use_bigrams: bool = True,
+    sparse_use_translation: bool = True,
 ) -> PipelineConfig:
     """Build a predefined pipeline configuration profile.
 
@@ -59,6 +72,33 @@ def build_pipeline_config(
             f"Unknown fusion method: {fusion_method}. Use 'rrf' or 'random_forest'."
         )
 
+    if profile == "custom":
+        retrievers = []
+        if dense_model:
+            retrievers.append(RetrieverConfig(name=dense_model))
+        if not disable_sparse:
+            retrievers.append(RetrieverConfig(
+                name="sparse",
+                params={
+                    "k1": sparse_k1,
+                    "b": sparse_b,
+                    "use_bigrams": sparse_use_bigrams,
+                    "use_translation": sparse_use_translation,
+                }
+            ))
+
+        return PipelineConfig(
+            retrievers=retrievers,
+            reranker=RerankerConfig(name=reranker_model, enabled=not disable_reranker),
+            use_fusion=True,
+            fusion_method=normalized_fusion_method,
+            fusion_top_k=30,
+            sparse_cache_top_k=2000,
+            final_top_k=5,
+            hf_fusion_repo_id=hf_fusion_repo_id,
+            hf_token=hf_token,
+        )
+
     if profile == "demo":
         return PipelineConfig(
             retrievers=[
@@ -71,6 +111,8 @@ def build_pipeline_config(
             fusion_top_k=30,
             sparse_cache_top_k=2000,
             final_top_k=5,
+            hf_fusion_repo_id=hf_fusion_repo_id,
+            hf_token=hf_token,
         )
 
     if profile == "evaluation":
@@ -85,6 +127,8 @@ def build_pipeline_config(
             fusion_top_k=30,
             sparse_cache_top_k=2000,
             final_top_k=5,
+            hf_fusion_repo_id=hf_fusion_repo_id,
+            hf_token=hf_token,
         )
 
     if profile == "retrieval-only":
@@ -99,6 +143,8 @@ def build_pipeline_config(
             fusion_top_k=30,
             sparse_cache_top_k=2000,
             final_top_k=5,
+            hf_fusion_repo_id=hf_fusion_repo_id,
+            hf_token=hf_token,
         )
 
     raise ValueError(f"Unknown pipeline profile: {profile}")

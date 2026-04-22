@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from .pipeline import RetrievalPipeline
 from .pipeline_config import PipelineConfig
-from .rerankers import Gemma2BReranker, NemotronReranker
+from .rerankers import Gemma2BReranker, JinaReranker, NemotronReranker
 from .retrievers import BGEM3Retriever, HarrierRetriever, SparseRetriever
+
+BGE_M3_LORA_ID = "boyes-boys-clef-2026/bge-m3-checkthat-finetuned"
 
 
 def create_retriever(name: str, params: dict | None = None):
@@ -24,7 +26,7 @@ def create_retriever(name: str, params: dict | None = None):
     params = params or {}
 
     if name == "sparse":
-        return SparseRetriever()
+        return SparseRetriever(**params)
     if name == "harrier-270m":
         return HarrierRetriever(
             model_name="microsoft/harrier-oss-v1-270m",
@@ -33,7 +35,8 @@ def create_retriever(name: str, params: dict | None = None):
     if name == "harrier-27b":
         return HarrierRetriever(**params)
     if name == "bge-m3":
-        return BGEM3Retriever(**params)
+        bge_params = {"lora_id": BGE_M3_LORA_ID, **params}
+        return BGEM3Retriever(**bge_params)
     raise ValueError(f"Unknown retriever: {name}")
 
 
@@ -55,6 +58,8 @@ def create_reranker(name: str, params: dict | None = None):
         return NemotronReranker(**params)
     if name == "gemma2b":
         return Gemma2BReranker(**params)
+    if name == "jina-v3":
+        return JinaReranker(**params)
     raise ValueError(f"Unknown reranker: {name}")
 
 

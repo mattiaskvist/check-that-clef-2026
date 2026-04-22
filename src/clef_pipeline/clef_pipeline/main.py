@@ -2,7 +2,6 @@
 
 import modal
 
-from .fusions import RandomForestFuser
 from .logging_utils import StageTimer, get_logger
 from .metrics import EvaluationMetrics
 from .pipeline_config import build_pipeline_config
@@ -91,7 +90,13 @@ def evaluate_pipeline(
     submission_volume_subdir: str = "submissions",
     fusion_method: str = "rrf",
     force_retrain_fusion: bool = False,
-    global_fusion_model: bool = False,
+    hf_fusion_repo_id: str | None = "boyes-boys-clef-2026/random-forest-fuser",
+    profile: str = "custom",
+    dense_model: str = "harrier-27b",
+    disable_sparse: bool = False,
+    reranker_model: str = "nemotron",
+    disable_reranker: bool = False,
+    sparse_vanilla: bool = False,
 ):
     """Run the full retrieval evaluation workflow on Modal.
 
@@ -104,11 +109,12 @@ def evaluate_pipeline(
         submission_volume_subdir: Subdirectory under cache volume for submissions.
         fusion_method: Fusion strategy (``rrf`` or ``random_forest``).
         force_retrain_fusion: Force retraining learned fusion model instead of loading cache.
-        global_fusion_model: Train one fusion model for all languages.
+        hf_fusion_repo_id: Hugging Face repository ID to push/pull fusion models.
 
     Returns:
         Global language results and optional submission artifact metadata.
     """
+    import os
     from datetime import datetime, timezone
 
     from datasets import load_dataset
@@ -116,10 +122,27 @@ def evaluate_pipeline(
 
     timer = StageTimer()
     split = normalize_split(split)
-    config = build_pipeline_config("evaluation", fusion_method=fusion_method)
+
+    sparse_k1 = 1.5 if sparse_vanilla else 2.5
+    sparse_b = 0.75 if sparse_vanilla else 0.85
+    sparse_use_bigrams = not sparse_vanilla
+    sparse_use_translation = not sparse_vanilla
+
+    config = build_pipeline_config(
+        profile,
+        fusion_method=fusion_method,
+        hf_fusion_repo_id=hf_fusion_repo_id,
+        hf_token=os.environ.get("HF_TOKEN"),
+        dense_model=dense_model,
+        disable_sparse=disable_sparse,
+        reranker_model=reranker_model,
+        disable_reranker=disable_reranker,
+        sparse_k1=sparse_k1,
+        sparse_b=sparse_b,
+        sparse_use_bigrams=sparse_use_bigrams,
+        sparse_use_translation=sparse_use_translation,
+    )
     pipeline = build_pipeline_from_config(config)
-    if config.fusion_method == "random_forest":
-        pipeline.fuser = RandomForestFuser(global_model=global_fusion_model)
 
     logger.info("Loading collection and building index...")
     collection_dataset = load_dataset(
@@ -148,63 +171,14 @@ def evaluate_pipeline(
         )
         embedding_cache.commit()
 
-    if config.fusion_method == "random_forest":
-        dense_retriever, sparse_retriever = pipeline.get_fusion_retrievers()
-        if not isinstance(pipeline.fuser, RandomForestFuser):
-            raise RuntimeError("Expected RandomForestFuser for random_forest mode.")
-
-        sparse_config = {
-            "k1": getattr(sparse_retriever, "bm25_k1", None),
-            "b": getattr(sparse_retriever, "bm25_b", None),
-            "stemmer": "lancaster",
-        }
-        dense_model_name = getattr(
-            dense_retriever, "model_name", dense_retriever.__class__.__name__
-        )
-
-        loaded = False
-        if not force_retrain_fusion:
-            loaded = pipeline.fuser.load(
-                cache_dir=CACHE_MOUNT,
-                dense_model_name=dense_model_name,
-                sparse_config=sparse_config,
-                train_split="train",
-            )
-
-        if not loaded:
-            train_tweets_by_lang: dict[str, list[dict]] = {}
-            for lang in languages:
-                train_tweets = list(load_dataset(CHECKTHAT_DATASET, lang)["train"])
-                train_tweets_by_lang[lang] = train_tweets
-                train_query_texts = [row["text"] for row in train_tweets]
-
-                dense_retriever.index_queries(
-                    train_query_texts,
-                    cache_dir=CACHE_MOUNT,
-                    cache_name=f"queries_train_{lang}",
-                    force_recompute=force_recompute_dense_queries,
-                )
-                sparse_retriever.index_queries(
-                    train_query_texts,
-                    lang=lang,
-                    cache_dir=CACHE_MOUNT,
-                    cache_name=f"sparse_queries_train_{lang}",
-                    top_k=config.sparse_cache_top_k,
-                    force_recompute=force_recompute_sparse_cache,
-                )
-                embedding_cache.commit()
-
-            pipeline.fuser.train(
-                dense_retriever=dense_retriever,
-                sparse_retriever=sparse_retriever,
-                train_tweets_by_lang=train_tweets_by_lang,
-                article_pubkeys=pipeline.article_pubkeys,
-                dense_model_name=dense_model_name,
-                sparse_config=sparse_config,
-                train_split="train",
-            )
-            pipeline.fuser.save(cache_dir=CACHE_MOUNT)
-            embedding_cache.commit()
+    pipeline.prepare_fusion_model(
+        cache_dir=CACHE_MOUNT,
+        languages=languages,
+        force_retrain_fusion=force_retrain_fusion,
+        force_recompute_dense_queries=force_recompute_dense_queries,
+        force_recompute_sparse_cache=force_recompute_sparse_cache,
+        on_cache_update=embedding_cache.commit,
+    )
 
     pipeline.unload_dense_models()
 
@@ -332,7 +306,14 @@ def main(
     submission_download_dir: str = "submissions",
     fusion_method: str = "rrf",
     force_retrain_fusion: bool = False,
-    global_fusion_model: bool = False,
+    hf_fusion_repo_id: str | None = "boyes-boys-clef-2026/random-forest-fuser",
+    profile: str = "custom",
+    dense_model: str = "harrier-27b",
+    disable_sparse: bool = False,
+    reranker_model: str = "nemotron",
+    disable_reranker: bool = False,
+    sparse_vanilla: bool = False,
+    metrics_output_file: str | None = None,
 ):
     """Local CLI entrypoint that dispatches Modal evaluation and export.
 
@@ -344,6 +325,7 @@ def main(
         export_submission_tsv: Whether to generate submission TSV files.
         submission_volume_subdir: Remote directory prefix in Modal volume.
         submission_download_dir: Local destination for downloaded submission files.
+        hf_fusion_repo_id: Hugging Face repository ID to push/pull fusion models.
     """
     run_output = evaluate_pipeline.remote(
         force_recompute_sparse_cache=force_recompute_sparse_cache,
@@ -354,8 +336,21 @@ def main(
         submission_volume_subdir=submission_volume_subdir,
         fusion_method=fusion_method,
         force_retrain_fusion=force_retrain_fusion,
-        global_fusion_model=global_fusion_model,
+        hf_fusion_repo_id=hf_fusion_repo_id,
+        profile=profile,
+        dense_model=dense_model,
+        disable_sparse=disable_sparse,
+        reranker_model=reranker_model,
+        disable_reranker=disable_reranker,
+        sparse_vanilla=sparse_vanilla,
     )
+
+    if metrics_output_file:
+        import json
+
+        with open(metrics_output_file, "w") as f:
+            json.dump(run_output["global_results"], f, indent=2)
+        print(f"Saved metrics to {metrics_output_file}")
 
     if export_submission_tsv:
         submission_artifacts = run_output["submission_artifacts"]
