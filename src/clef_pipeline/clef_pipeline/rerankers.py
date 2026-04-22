@@ -215,3 +215,69 @@ class NemotronReranker(BaseReranker):
         results.sort(key=lambda x: x[1], reverse=True)
 
         return results
+
+
+class JinaReranker(BaseReranker):
+    """Sequence-classification reranker backed by Jina model weights."""
+
+    def __init__(
+        self,
+        model_name: str = "jinaai/jina-reranker-v3",
+        max_length: int = 2048,
+    ):
+        """Store model settings and defer heavy loading until first use.
+
+        Args:
+            model_name: Hugging Face model id for the reranker.
+            max_length: Maximum sequence length for truncation.
+        """
+        self.model_name = model_name
+        self.max_length = max_length
+        self.model = None
+
+    def _ensure_loaded(self):
+        """Lazily load model weights onto available GPU resources."""
+        if self.model is not None:
+            return
+
+        import torch
+        from transformers import AutoModelForSequenceClassification
+
+        self.torch = torch
+
+        print(f"Loading Cross-Encoder Reranker ({self.model_name}) to GPU...")
+
+        self.model = AutoModelForSequenceClassification.from_pretrained(
+            self.model_name,
+            torch_dtype=torch.bfloat16,
+            trust_remote_code=True,
+            device_map="auto",
+        ).eval()
+
+    def rerank(
+        self, query: str, doc_indices: list[int], corpus: list[str]
+    ) -> list[tuple[int, float]]:
+        """Rerank candidate documents using Jina's compute_score method.
+
+        Args:
+            query: Query text.
+            doc_indices: Candidate document indices.
+            corpus: Document text corpus aligned to indices.
+
+        Returns:
+            Candidate indices paired with scores sorted descending.
+        """
+        self._ensure_loaded()
+
+        pairs = [[query, corpus[doc_id]] for doc_id in doc_indices]
+
+        with self.torch.inference_mode():
+            scores = self.model.compute_score(pairs, max_length=self.max_length)
+
+        if not isinstance(scores, list):
+            scores = [scores]
+
+        results = list(zip(doc_indices, scores))
+        results.sort(key=lambda x: x[1], reverse=True)
+
+        return results
