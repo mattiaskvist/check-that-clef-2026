@@ -63,6 +63,73 @@ You can mix and match the available models:
 - **Rerankers:** `nemotron`, `gemma2b`
 - **Fusion Methods:** `rrf` (Reciprocal Rank Fusion), `random_forest` (Learned RF Classifier)
 
+## Ablation Study
+
+Run the following commands to execute the ablation study and collect the metrics/submission files for each combination. The metrics are saved to local JSON files (`metrics_X.json`) and submission files will be generated in the Modal volume and instructions to download them will be printed.
+
+### 1. Vanilla BM25 Sparse Retriever
+```bash
+uv run modal run -m clef_pipeline.main \
+  --profile custom --dense-model "" --disable-reranker --sparse-vanilla \
+  --split dev --export-submission-tsv --metrics-output-file metrics_1_vanilla_bm25.json
+```
+
+### 2. Optimized Sparse Retriever
+```bash
+uv run modal run -m clef_pipeline.main \
+  --profile custom --dense-model "" --disable-reranker \
+  --split dev --export-submission-tsv --metrics-output-file metrics_2_optimized_sparse.json
+```
+
+### 3. BGE-M3 Dense Retriever Only
+```bash
+uv run modal run -m clef_pipeline.main \
+  --profile custom --dense-model "bge-m3" --disable-sparse --disable-reranker \
+  --split dev --export-submission-tsv --metrics-output-file metrics_3_bgem3_dense.json
+```
+
+### 4. Harrier 27B Dense Retriever Only
+```bash
+uv run modal run -m clef_pipeline.main \
+  --profile custom --dense-model "harrier-27b" --disable-sparse --disable-reranker \
+  --split dev --export-submission-tsv --metrics-output-file metrics_4_harrier_dense.json
+```
+
+### 5. Hybrid (Optimized Sparse + Harrier) + RRF Fusion
+```bash
+uv run modal run -m clef_pipeline.main \
+  --profile custom --dense-model "harrier-27b" --fusion-method "rrf" --disable-reranker \
+  --split dev --export-submission-tsv --metrics-output-file metrics_5_hybrid_rrf.json
+```
+
+### 6. Hybrid (Optimized Sparse + Harrier) + Random Forest Fusion
+```bash
+uv run modal run -m clef_pipeline.main \
+  --profile custom --dense-model "harrier-27b" --fusion-method "random_forest" --disable-reranker \
+  --split dev --export-submission-tsv --metrics-output-file metrics_6_hybrid_rf.json
+```
+
+### 7. Hybrid + Random Forest Fusion + Nemotron Reranker
+```bash
+uv run modal run -m clef_pipeline.main \
+  --profile custom --dense-model "harrier-27b" --fusion-method "random_forest" \
+  --split dev --export-submission-tsv --metrics-output-file metrics_7_hybrid_rf_nemotron.json
+```
+
+### 8. Hybrid + RRF Fusion + Nemotron Reranker
+```bash
+uv run modal run -m clef_pipeline.main \
+  --profile custom --dense-model "harrier-27b" --fusion-method "rrf" \
+  --split dev --export-submission-tsv --metrics-output-file metrics_8_hybrid_rrf_nemotron.json
+```
+
+### 9. Harrier 27B Dense Only + Nemotron Reranker
+```bash
+uv run modal run -m clef_pipeline.main \
+  --profile custom --dense-model "harrier-27b" --disable-sparse \
+  --split dev --export-submission-tsv --metrics-output-file metrics_9_harrier_nemotron.json
+```
+
 ## Modal commands
 
 ```bash

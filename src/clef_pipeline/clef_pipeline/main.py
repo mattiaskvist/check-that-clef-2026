@@ -92,6 +92,11 @@ def evaluate_pipeline(
     fusion_method: str = "rrf",
     force_retrain_fusion: bool = False,
     hf_fusion_repo_id: str | None = "boyes-boys-clef-2026/random-forest-fuser",
+    profile: str = "custom",
+    dense_model: str = "harrier-27b",
+    disable_sparse: bool = False,
+    disable_reranker: bool = False,
+    sparse_vanilla: bool = False,
 ):
     """Run the full retrieval evaluation workflow on Modal.
 
@@ -117,11 +122,24 @@ def evaluate_pipeline(
 
     timer = StageTimer()
     split = normalize_split(split)
+    
+    sparse_k1 = 1.5 if sparse_vanilla else 2.5
+    sparse_b = 0.75 if sparse_vanilla else 0.85
+    sparse_use_bigrams = not sparse_vanilla
+    sparse_use_translation = not sparse_vanilla
+
     config = build_pipeline_config(
-        "evaluation",
+        profile,
         fusion_method=fusion_method,
         hf_fusion_repo_id=hf_fusion_repo_id,
         hf_token=os.environ.get("HF_TOKEN"),
+        dense_model=dense_model,
+        disable_sparse=disable_sparse,
+        disable_reranker=disable_reranker,
+        sparse_k1=sparse_k1,
+        sparse_b=sparse_b,
+        sparse_use_bigrams=sparse_use_bigrams,
+        sparse_use_translation=sparse_use_translation,
     )
     pipeline = build_pipeline_from_config(config)
 
@@ -288,6 +306,12 @@ def main(
     fusion_method: str = "rrf",
     force_retrain_fusion: bool = False,
     hf_fusion_repo_id: str | None = "boyes-boys-clef-2026/random-forest-fuser",
+    profile: str = "custom",
+    dense_model: str = "harrier-27b",
+    disable_sparse: bool = False,
+    disable_reranker: bool = False,
+    sparse_vanilla: bool = False,
+    metrics_output_file: str | None = None,
 ):
     """Local CLI entrypoint that dispatches Modal evaluation and export.
 
@@ -311,7 +335,18 @@ def main(
         fusion_method=fusion_method,
         force_retrain_fusion=force_retrain_fusion,
         hf_fusion_repo_id=hf_fusion_repo_id,
+        profile=profile,
+        dense_model=dense_model,
+        disable_sparse=disable_sparse,
+        disable_reranker=disable_reranker,
+        sparse_vanilla=sparse_vanilla,
     )
+
+    if metrics_output_file:
+        import json
+        with open(metrics_output_file, "w") as f:
+            json.dump(run_output["global_results"], f, indent=2)
+        print(f"Saved metrics to {metrics_output_file}")
 
     if export_submission_tsv:
         submission_artifacts = run_output["submission_artifacts"]

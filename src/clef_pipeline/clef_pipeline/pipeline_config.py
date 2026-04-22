@@ -48,6 +48,13 @@ def build_pipeline_config(
     global_fusion_model: bool = False,
     hf_fusion_repo_id: str | None = None,
     hf_token: str | None = None,
+    dense_model: str = "harrier-27b",
+    disable_sparse: bool = False,
+    disable_reranker: bool = False,
+    sparse_k1: float = 2.5,
+    sparse_b: float = 0.85,
+    sparse_use_bigrams: bool = True,
+    sparse_use_translation: bool = True,
 ) -> PipelineConfig:
     """Build a predefined pipeline configuration profile.
 
@@ -64,6 +71,34 @@ def build_pipeline_config(
     if normalized_fusion_method not in {"rrf", "random_forest"}:
         raise ValueError(
             f"Unknown fusion method: {fusion_method}. Use 'rrf' or 'random_forest'."
+        )
+
+    if profile == "custom":
+        retrievers = []
+        if dense_model:
+            retrievers.append(RetrieverConfig(name=dense_model))
+        if not disable_sparse:
+            retrievers.append(RetrieverConfig(
+                name="sparse",
+                params={
+                    "k1": sparse_k1,
+                    "b": sparse_b,
+                    "use_bigrams": sparse_use_bigrams,
+                    "use_translation": sparse_use_translation,
+                }
+            ))
+
+        return PipelineConfig(
+            retrievers=retrievers,
+            reranker=RerankerConfig(name="nemotron", enabled=not disable_reranker),
+            use_fusion=True,
+            fusion_method=normalized_fusion_method,
+            fusion_top_k=30,
+            sparse_cache_top_k=2000,
+            final_top_k=5,
+            global_fusion_model=global_fusion_model,
+            hf_fusion_repo_id=hf_fusion_repo_id,
+            hf_token=hf_token,
         )
 
     if profile == "demo":

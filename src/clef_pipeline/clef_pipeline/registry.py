@@ -24,7 +24,7 @@ def create_retriever(name: str, params: dict | None = None):
     params = params or {}
 
     if name == "sparse":
-        return SparseRetriever()
+        return SparseRetriever(**params)
     if name == "harrier-270m":
         return HarrierRetriever(
             model_name="microsoft/harrier-oss-v1-270m",
