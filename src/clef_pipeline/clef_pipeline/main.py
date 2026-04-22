@@ -94,6 +94,7 @@ def evaluate_pipeline(
     profile: str = "custom",
     dense_model: str = "harrier-27b",
     disable_sparse: bool = False,
+    reranker_model: str = "nemotron",
     disable_reranker: bool = False,
     sparse_vanilla: bool = False,
 ):
@@ -134,6 +135,7 @@ def evaluate_pipeline(
         hf_token=os.environ.get("HF_TOKEN"),
         dense_model=dense_model,
         disable_sparse=disable_sparse,
+        reranker_model=reranker_model,
         disable_reranker=disable_reranker,
         sparse_k1=sparse_k1,
         sparse_b=sparse_b,
@@ -308,6 +310,7 @@ def main(
     profile: str = "custom",
     dense_model: str = "harrier-27b",
     disable_sparse: bool = False,
+    reranker_model: str = "nemotron",
     disable_reranker: bool = False,
     sparse_vanilla: bool = False,
     metrics_output_file: str | None = None,
@@ -337,6 +340,7 @@ def main(
         profile=profile,
         dense_model=dense_model,
         disable_sparse=disable_sparse,
+        reranker_model=reranker_model,
         disable_reranker=disable_reranker,
         sparse_vanilla=sparse_vanilla,
     )

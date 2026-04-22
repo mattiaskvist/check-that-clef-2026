@@ -73,7 +73,7 @@ The Random Forest fuser trains automatically the first time it is needed and sav
 
 1. **Run Command 5 (Hybrid RRF)**: Builds the massive `harrier-27b` document embeddings, the `harrier-27b` dev queries, and the optimized `sparse` dev queries.
 2. **Run Command 6 (Hybrid RF)**: Hits the document cache from Command 5. Automatically computes the `train` queries for `harrier-27b` and `sparse`, trains the Random Forest model, saves it to the cache, and evaluates.
-3. **Run Commands 7, 8, 9, 2, and 4**: These will now completely hit the caches built in steps 1 and 2, running lightning fast and only spending time on reranking where applicable.
+3. **Run Commands 7, 8, 9, 10, 11, 2, and 4**: These will now completely hit the caches built in steps 1 and 2, running lightning fast and only spending time on reranking where applicable.
 4. **Run Command 1 (Vanilla BM25)**: Computes a new sparse cache for the `dev` queries using vanilla BM25 parameters.
 5. **Run Command 3 (BGE-M3)**: Computes the `bge-m3` document and dev query embeddings from scratch.
 
@@ -140,6 +140,20 @@ uv run modal run -m clef_pipeline.main \
 uv run modal run -m clef_pipeline.main \
   --profile custom --dense-model "harrier-27b" --disable-sparse \
   --split dev --export-submission-tsv --metrics-output-file metrics_9_harrier_nemotron.json
+```
+
+### 10. Hybrid + Random Forest Fusion + Gemma Reranker
+```bash
+uv run modal run -m clef_pipeline.main \
+  --profile custom --dense-model "harrier-27b" --fusion-method "random_forest" --reranker-model "gemma2b" \
+  --split dev --export-submission-tsv --metrics-output-file metrics_10_hybrid_rf_gemma.json
+```
+
+### 11. Hybrid + RRF Fusion + Gemma Reranker
+```bash
+uv run modal run -m clef_pipeline.main \
+  --profile custom --dense-model "harrier-27b" --fusion-method "rrf" --reranker-model "gemma2b" \
+  --split dev --export-submission-tsv --metrics-output-file metrics_11_hybrid_rrf_gemma.json
 ```
 
 ## Modal commands

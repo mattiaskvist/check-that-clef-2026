@@ -48,6 +48,7 @@ def build_pipeline_config(
     hf_token: str | None = None,
     dense_model: str = "harrier-27b",
     disable_sparse: bool = False,
+    reranker_model: str = "nemotron",
     disable_reranker: bool = False,
     sparse_k1: float = 2.5,
     sparse_b: float = 0.85,
@@ -88,7 +89,7 @@ def build_pipeline_config(
 
         return PipelineConfig(
             retrievers=retrievers,
-            reranker=RerankerConfig(name="nemotron", enabled=not disable_reranker),
+            reranker=RerankerConfig(name=reranker_model, enabled=not disable_reranker),
             use_fusion=True,
             fusion_method=normalized_fusion_method,
             fusion_top_k=30,
