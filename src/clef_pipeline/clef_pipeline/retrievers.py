@@ -423,11 +423,19 @@ class HarrierRetriever(BaseRetriever):
 class SparseRetriever(BaseRetriever):
     """A retriever that performs sparse retrieval."""
 
-    def __init__(self):
+    def __init__(
+        self,
+        k1: float = 2.5,
+        b: float = 0.85,
+        use_bigrams: bool = True,
+        use_translation: bool = True,
+    ):
         """Initialize sparse retriever parameters and caches."""
         self.bm25_model = None
-        self.bm25_k1 = 2.5
-        self.bm25_b = 0.85
+        self.bm25_k1 = k1
+        self.bm25_b = b
+        self.use_bigrams = use_bigrams
+        self.use_translation = use_translation
         self.stemmer = LancasterStemmer()
         self.diffusion_steps = 2
         self.diffusion_decay = 0.65
@@ -444,9 +452,13 @@ class SparseRetriever(BaseRetriever):
 
     def _cache_key(self) -> str:
         """Build cache namespace identifier for sparse retrieval settings."""
+        use_bigrams = getattr(self, "use_bigrams", True)
+        use_translation = getattr(self, "use_translation", True)
+        bigrams_val = 1 if use_bigrams else 0
+        trans_val = "v1" if use_translation else "none"
         return (
             f"bm25plus-k1_{self.bm25_k1:.2f}-b_{self.bm25_b:.2f}"
-            "-stem_lancaster-bigrams_1-translate_v1"
+            f"-stem_lancaster-bigrams_{bigrams_val}-translate_{trans_val}"
         )
 
     @staticmethod
@@ -519,7 +531,11 @@ class SparseRetriever(BaseRetriever):
         if self.bm25_model is None:
             raise ValueError("SparseRetriever is not indexed. Call index(...) first.")
 
-        translated_query = self._translate_query(query, lang)
+        if self.use_translation:
+            translated_query = self._translate_query(query, lang)
+        else:
+            translated_query = query
+
         tokenized_query = self.tokenize(translated_query)
         scores_dict = self.bm25_model.get_scores(tokenized_query)
         if not scores_dict:
@@ -594,8 +610,10 @@ class SparseRetriever(BaseRetriever):
             scores[query_idx], dtype=np.float32
         )
 
-    def tokenize(self, text: str, add_bigrams: bool = True) -> list[str]:
+    def tokenize(self, text: str, add_bigrams: bool | None = None) -> list[str]:
         """Tokenize text with punctuation, stopword removal, stemming, and optional bigrams."""
+        if add_bigrams is None:
+            add_bigrams = self.use_bigrams
         text = re.sub(r"[^\w\s]", " ", text.lower())
         tokens = text.split()
         unigrams = [
