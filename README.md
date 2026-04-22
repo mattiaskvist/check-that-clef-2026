@@ -67,6 +67,18 @@ You can mix and match the available models:
 
 Run the following commands to execute the ablation study and collect the metrics/submission files for each combination. The metrics are saved to local JSON files (`metrics_X.json`) and submission files will be generated in the Modal volume and instructions to download them will be printed.
 
+### Recommended Execution Order (for maximum caching)
+
+The Random Forest fuser trains automatically the first time it is needed and saves to the Modal volume. To avoid recomputing dense document and query embeddings multiple times, run the commands in this order:
+
+1. **Run Command 5 (Hybrid RRF)**: Builds the massive `harrier-27b` document embeddings, the `harrier-27b` dev queries, and the optimized `sparse` dev queries.
+2. **Run Command 6 (Hybrid RF)**: Hits the document cache from Command 5. Automatically computes the `train` queries for `harrier-27b` and `sparse`, trains the Random Forest model, saves it to the cache, and evaluates.
+3. **Run Commands 7, 8, 9, 2, and 4**: These will now completely hit the caches built in steps 1 and 2, running lightning fast and only spending time on reranking where applicable.
+4. **Run Command 1 (Vanilla BM25)**: Computes a new sparse cache for the `dev` queries using vanilla BM25 parameters.
+5. **Run Command 3 (BGE-M3)**: Computes the `bge-m3` document and dev query embeddings from scratch.
+
+*(Note: If you ever need to explicitly force the random forest model to retrain, simply append `--force-retrain-fusion` to the relevant command).*
+
 ### 1. Vanilla BM25 Sparse Retriever
 ```bash
 uv run modal run -m clef_pipeline.main \
