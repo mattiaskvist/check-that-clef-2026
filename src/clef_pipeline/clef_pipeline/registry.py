@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from .pipeline import RetrievalPipeline
 from .pipeline_config import PipelineConfig
-from .rerankers import Gemma2BReranker, JinaReranker, NemotronReranker
+from .rerankers import Gemma2BReranker, JinaReranker, NemotronReranker, Qwen3Reranker
 from .retrievers import BGEM3Retriever, HarrierRetriever, SparseRetriever
 
 BGE_M3_LORA_ID = "boyes-boys-clef-2026/bge-m3-checkthat-finetuned"
@@ -60,6 +60,12 @@ def create_reranker(name: str, params: dict | None = None):
         return Gemma2BReranker(**params)
     if name == "jina-v3":
         return JinaReranker(**params)
+    if name == "qwen3-reranker-8b":
+        return Qwen3Reranker(model_name="Qwen/Qwen3-Reranker-8B", **params)
+    if name == "qwen3-reranker-4b":
+        return Qwen3Reranker(model_name="Qwen/Qwen3-Reranker-4B", **params)
+    if name == "qwen3-reranker-0.6b":
+        return Qwen3Reranker(model_name="Qwen/Qwen3-Reranker-0.6B", **params)
     raise ValueError(f"Unknown reranker: {name}")
 
 
