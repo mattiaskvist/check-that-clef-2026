@@ -241,9 +241,7 @@ class HarrierRetriever(BaseRetriever):
         self.prompt = self.DEFAULT_QUERY_PROMPT
 
         print(f"Loading Dense Retriever ({model_name})...")
-        self.model = SentenceTransformer(
-            model_name, device="cuda", model_kwargs={"dtype": "auto"}
-        )
+        self.model = None
 
     def _cache_key(self) -> str:
         """Build cache namespace identifier for model settings."""
@@ -305,6 +303,11 @@ class HarrierRetriever(BaseRetriever):
 
         if force_recompute and cache_path and os.path.exists(cache_path):
             print(f"[cache bypass] Recomputing {label} from source texts.")
+
+        if self.model is None:
+            self.model = SentenceTransformer(
+                self.model_name, device="cuda", model_kwargs={"dtype": "auto"}
+            )
 
         print(f"Encoding {len(texts)} {label}...")
         embs = self.model.encode(

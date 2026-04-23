@@ -281,3 +281,149 @@ class JinaReranker(BaseReranker):
         results.sort(key=lambda x: x[1], reverse=True)
 
         return results
+
+class Qwen3Reranker(BaseReranker):
+    """Qwen3-Reranker cross-encoder.
+
+    Qwen3-Reranker is an instruction-aware causal LM reranker that dominates
+    the 2026 multilingual reranking benchmarks (MMTEB-R 72.74 at 4B, leads
+    the Qwen3 family at 8B). Scores are derived from a yes/no logit softmax
+    on the final generated token, following the official Qwen inference
+    recipe. Supports 100+ languages including strong German.
+    """
+
+    _PREFIX = (
+        '<|im_start|>system\nJudge whether the Document meets the '
+        'requirements based on the Query and the Instruct provided. '
+        'Note that the answer can only be "yes" or "no".<|im_end|>\n'
+        '<|im_start|>user\n'
+    )
+    _SUFFIX = (
+        "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+    )
+    _DEFAULT_INSTRUCTION = (
+        "Given a scientific claim or social media post, retrieve the "
+        "scientific paper that the claim refers to or is supported by."
+    )
+
+    def __init__(
+        self,
+        model_name: str = "Qwen/Qwen3-Reranker-8B",
+        max_length: int = 2048,
+        micro_batch_size: int = 8,
+        instruction: str | None = None,
+    ):
+        """Store model settings and defer heavy loading until first use.
+
+        Args:
+            model_name: Hugging Face model id. Use ``Qwen/Qwen3-Reranker-0.6B``,
+                ``Qwen/Qwen3-Reranker-4B`` or ``Qwen/Qwen3-Reranker-8B``.
+            max_length: Token budget per (query, passage) pair. Qwen3
+                supports 32k but 2048 is plenty for title+abstract and much
+                faster.
+            micro_batch_size: Pairs per forward pass. Default 8 is tuned
+                for B200 (192 GB HBM) running the 8B variant at fp16; drop
+                this if running on A100-40GB or using flash_attention_2.
+            instruction: Task instruction injected into the prompt. If
+                None, a scientific-paper-retrieval default is used.
+        """
+        self.model_name = model_name
+        self.max_length = int(max_length)
+        self.micro_batch_size = max(1, int(micro_batch_size))
+        self.instruction = instruction or self._DEFAULT_INSTRUCTION
+        self.model = None
+        self.tokenizer = None
+
+    def _ensure_loaded(self):
+        """Lazily load tokenizer/model weights and pre-tokenize the prompt."""
+        if self.model is not None:
+            return
+
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        self.torch = torch
+
+        print(f"Loading Qwen3 Reranker ({self.model_name}) to GPU...")
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.model_name, padding_side="left"
+        )
+        self.model = AutoModelForCausalLM.from_pretrained(
+            self.model_name,
+            torch_dtype=torch.float16,
+            device_map="auto",
+        ).eval()
+
+        self.token_true_id = self.tokenizer.convert_tokens_to_ids("yes")
+        self.token_false_id = self.tokenizer.convert_tokens_to_ids("no")
+
+        self.prefix_tokens = self.tokenizer.encode(
+            self._PREFIX, add_special_tokens=False
+        )
+        self.suffix_tokens = self.tokenizer.encode(
+            self._SUFFIX, add_special_tokens=False
+        )
+
+    def _format_pair(self, query: str, doc: str) -> str:
+        """Apply the Qwen3 instruction template to a (query, doc) pair."""
+        return (
+            f"<Instruct>: {self.instruction}\n"
+            f"<Query>: {query}\n"
+            f"<Document>: {doc}"
+        )
+
+    def _process_inputs(self, pairs: list[str]):
+        """Tokenize pairs and splice the system/user/assistant scaffold."""
+        budget = self.max_length - len(self.prefix_tokens) - len(self.suffix_tokens)
+        inputs = self.tokenizer(
+            pairs,
+            padding=False,
+            truncation="longest_first",
+            return_attention_mask=False,
+            max_length=budget,
+        )
+        for i, ids in enumerate(inputs["input_ids"]):
+            inputs["input_ids"][i] = self.prefix_tokens + ids + self.suffix_tokens
+        inputs = self.tokenizer.pad(
+            inputs,
+            padding=True,
+            return_tensors="pt",
+            max_length=self.max_length,
+        )
+        return {k: v.to(self.model.device) for k, v in inputs.items()}
+
+    def rerank(
+        self, query: str, doc_indices: list[int], corpus: list[str]
+    ) -> list[tuple[int, float]]:
+        """Rerank candidates by the softmaxed yes/no logit probability.
+
+        Args:
+            query: Query text.
+            doc_indices: Candidate document indices.
+            corpus: Document text corpus aligned to indices.
+
+        Returns:
+            Candidate indices paired with scores sorted descending.
+        """
+        if not doc_indices:
+            return []
+
+        self._ensure_loaded()
+
+        scores: list[float] = []
+        for start in range(0, len(doc_indices), self.micro_batch_size):
+            batch_ids = doc_indices[start : start + self.micro_batch_size]
+            pairs = [self._format_pair(query, corpus[doc_id]) for doc_id in batch_ids]
+            inputs = self._process_inputs(pairs)
+            with self.torch.inference_mode():
+                last_logits = self.model(**inputs).logits[:, -1, :]
+                true_logits = last_logits[:, self.token_true_id]
+                false_logits = last_logits[:, self.token_false_id]
+                stacked = self.torch.stack([false_logits, true_logits], dim=1)
+                log_probs = self.torch.nn.functional.log_softmax(stacked, dim=1)
+                batch_scores = log_probs[:, 1].exp().cpu().float().tolist()
+            scores.extend(batch_scores)
+
+        results = list(zip(doc_indices, scores))
+        results.sort(key=lambda x: x[1], reverse=True)
+        return results
