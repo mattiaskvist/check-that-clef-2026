@@ -12,7 +12,7 @@ from collections import defaultdict, Counter
 
 
 # Config
-LANG = "en"
+LANG = "de"
 LOG_FILE = f"manual_research/research_results_{LANG}.tsv"
 
 TRANSLATE_TABLE = str.maketrans(string.punctuation, " " * len(string.punctuation))
@@ -81,7 +81,16 @@ def build_article(row):
 
     title = row.get("title") or ""
     abstract = row.get("abstract") or ""
+    authors_raw = row.get("authors") or ""
+    authors = (
+        " ".join(str(part) for part in authors_raw)
+        if isinstance(authors_raw, list)
+        else str(authors_raw)
+    ).strip()
     venue = row.get("venue") or ""
+
+    if LANG == 'de':
+        return " ".join([title, title, title, title, title, abstract, authors, venue, venue])
 
     return " ".join([title, title, title, venue, venue, abstract])
 
