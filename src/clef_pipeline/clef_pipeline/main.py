@@ -18,14 +18,28 @@ from .utils import CHECKTHAT_DATASET
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
+    # Reduce fragmentation during Harrier-27B encoding: the sliding-window
+    # causal mask is allocated as a big contiguous tensor and fails on a
+    # fragmented pool even when total free memory is sufficient.
+    .env({"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"})
     .pip_install("torch", extra_index_url="https://download.pytorch.org/whl/cu121")
     .pip_install(
-        "sentence-transformers",
+        # Pin <5: sentence-transformers 5.x calls AutoProcessor inside the
+        # Transformer module, which tries to load an image processor for
+        # multimodal-flagged HF repos like microsoft/harrier-oss-v1-27b
+        # and crashes. v4.x uses AutoTokenizer and works for our text-only
+        # retrievers (Harrier, BGE-M3, e5-large, jina-v3).
+        "sentence-transformers>=3.0,<5",
         "peft",
         "rank_bm25",
         "datasets",
         "tqdm",
-        "transformers",
+        # Pin <4.55: transformers 4.55+ introduced a vmap-based sliding-window
+        # mask builder (sdpa_mask_recent_torch, PR #41265) that materializes
+        # a 5-level-nested per-head mask and causes ~5 GiB allocations during
+        # Harrier-27B inference, OOMing on A100-80GB. The pre-4.55 builder
+        # is the memory-efficient path we were implicitly using before.
+        "transformers>=4.41,<4.55",
         "accelerate",
         "nltk",
         "Pillow",
@@ -40,6 +54,12 @@ embedding_cache = modal.Volume.from_name(
     EMBEDDING_CACHE_VOLUME_NAME, create_if_missing=True
 )
 CACHE_MOUNT = "/cache/embeddings"
+# Shared data volume holding training artifacts. Mounted read-mostly so the
+# evaluation pipeline can load a local reranker checkpoint by passing
+# ``reranker_model_name=/data/<checkpoint-dir>``.
+CLEF_VOLUME_NAME = "clef-vol"
+clef_volume = modal.Volume.from_name(CLEF_VOLUME_NAME, create_if_missing=True)
+DATA_MOUNT = "/data"
 logger = get_logger("clef_pipeline.modal")
 
 
@@ -77,10 +97,18 @@ def _print_language_summary(
 
 @app.function(
     image=image,
-    gpu="A100-80GB",
-    timeout=60 * 60 * 3,
+    # B200 (Blackwell, 192 GB HBM, new-generation drivers) handles every
+    # model in the stack — Harrier-27B encoding, Qwen3-Reranker-8B, Gemma
+    # rerankers — without the driver-mismatch failure seen on A100-80GB.
+    # Plenty of room to run large rerankers at bigger micro batches too.
+    gpu="H100",
+    # Budget: worst case is Qwen3-Reranker-8B on EN alone with
+    # fusion_top_k=100. Measured ~10 s/query on B200 => ~11 h for 3905
+    # queries, plus model cold start (~60 s) and Harrier query encode
+    # (~15 min if cache miss). 15 h gives comfortable headroom.
+    timeout=60 * 60 * 15,
     secrets=[modal.Secret.from_name("hf-token")],
-    volumes={CACHE_MOUNT: embedding_cache},
+    volumes={CACHE_MOUNT: embedding_cache, DATA_MOUNT: clef_volume},
 )
 def evaluate_pipeline(
     force_recompute_sparse_cache: bool = False,
@@ -90,8 +118,14 @@ def evaluate_pipeline(
     collect_submission: bool = False,
     submission_volume_subdir: str = "submissions",
     fusion_method: str = "rrf",
+    fusion_weight_dense: float = 0.8,
+    fusion_weight_sparse: float = 0.2,
+    fusion_top_k: int = 100,
     force_retrain_fusion: bool = False,
     global_fusion_model: bool = False,
+    reranker_name: str | None = None,
+    reranker_model_name: str | None = None,
+    languages_csv: str | None = None,
 ):
     """Run the full retrieval evaluation workflow on Modal.
 
@@ -103,12 +137,28 @@ def evaluate_pipeline(
         collect_submission: Whether to write submission TSV files.
         submission_volume_subdir: Subdirectory under cache volume for submissions.
         fusion_method: Fusion strategy (``rrf`` or ``random_forest``).
+        fusion_weight_dense: Weight on the dense retriever in weighted RRF.
+        fusion_weight_sparse: Weight on the sparse retriever in weighted RRF.
+        fusion_top_k: Candidate pool size handed to the reranker.
         force_retrain_fusion: Force retraining learned fusion model instead of loading cache.
         global_fusion_model: Train one fusion model for all languages.
+        reranker_name: Optional reranker registry name to override the
+            evaluation profile default (``"qwen3-reranker-8b"``). Pass the
+            empty string to disable reranking entirely.
+        reranker_model_name: Optional ``model_name`` forwarded to the
+            reranker constructor (e.g. a local checkpoint path on the
+            ``clef-vol`` volume).
+        languages_csv: Comma-separated subset of language codes to evaluate
+            (e.g. ``"de"`` or ``"de,fr"``). If empty/None, all supported
+            languages (``de``, ``fr``, ``en``) are evaluated. Useful for
+            GPU-budget-constrained runs that only need a single language —
+            DE reranking with 386 queries costs ~18 min vs. ~4h for all three.
 
     Returns:
         Global language results and optional submission artifact metadata.
     """
+    import json
+    import os
     from datetime import datetime, timezone
 
     from datasets import load_dataset
@@ -116,7 +166,18 @@ def evaluate_pipeline(
 
     timer = StageTimer()
     split = normalize_split(split)
-    config = build_pipeline_config("evaluation", fusion_method=fusion_method)
+    fusion_weights = (float(fusion_weight_dense), float(fusion_weight_sparse))
+    reranker_params = (
+        {"model_name": reranker_model_name} if reranker_model_name else None
+    )
+    config = build_pipeline_config(
+        "evaluation",
+        fusion_method=fusion_method,
+        fusion_weights=fusion_weights,
+        fusion_top_k=fusion_top_k,
+        reranker_name=reranker_name,
+        reranker_params=reranker_params,
+    )
     pipeline = build_pipeline_from_config(config)
     if config.fusion_method == "random_forest":
         pipeline.fuser = RandomForestFuser(global_model=global_fusion_model)
@@ -133,7 +194,21 @@ def evaluate_pipeline(
     )
     embedding_cache.commit()
 
-    languages = ["de", "fr", "en"]
+    ALL_LANGUAGES = ["de", "fr", "en"]
+    if languages_csv:
+        requested = [code.strip().lower() for code in languages_csv.split(",") if code.strip()]
+        unknown = [code for code in requested if code not in ALL_LANGUAGES]
+        if unknown:
+            raise ValueError(
+                f"Unknown language codes in languages_csv={languages_csv!r}: "
+                f"{unknown}. Supported: {ALL_LANGUAGES}"
+            )
+        # Preserve the canonical DE → FR → EN order so cache lookups and log
+        # output stay deterministic regardless of the order given on the CLI.
+        languages = [code for code in ALL_LANGUAGES if code in requested]
+        print(f"[languages] Evaluating subset: {languages}")
+    else:
+        languages = ALL_LANGUAGES
     lang_tweets: dict[str, list[dict]] = {}
     for lang in languages:
         tweets = list(load_dataset(CHECKTHAT_DATASET, lang)[split])
@@ -209,11 +284,28 @@ def evaluate_pipeline(
     pipeline.unload_dense_models()
 
     logger.info("Running multilingual evaluation...")
-    fusion_label = "RF Fusion" if config.fusion_method == "random_forest" else "RRF"
+    fusion_label_map = {
+        "random_forest": "RF Fusion",
+        "rrf": "RRF",
+    }
+    fusion_label = fusion_label_map.get(config.fusion_method, config.fusion_method)
     metrics = EvaluationMetrics(fusion_top_k=config.fusion_top_k)
     submission_predictions = (
         {lang: [] for lang in languages} if collect_submission else {}
     )
+
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+
+    # Partial results checkpoint directory: per-language metrics are flushed
+    # here as each language completes so a container timeout (or crash) still
+    # leaves usable numbers behind. This was added after a run hit the
+    # function timeout mid-EN reranking and lost every metric — DE and FR had
+    # already been computed but never printed because the aggregation is at
+    # the end of the language loop.
+    partial_results_dir = (
+        f"{CACHE_MOUNT}/partial_results/{split}-{run_id}"
+    )
+    os.makedirs(partial_results_dir, exist_ok=True)
 
     for lang in languages:
         tweets = lang_tweets[lang]
@@ -242,6 +334,29 @@ def evaluate_pipeline(
                 true_pubkey=row.get("pubkey"),
                 stages=result["stages"],
             )
+
+        # Language complete: print metrics now and flush to volume so a
+        # timeout during a later language doesn't erase this one's work.
+        try:
+            partial_summary = metrics.summary()
+            lang_data = partial_summary["languages"][lang]
+            _print_language_summary(
+                lang, lang_data, config.fusion_top_k, fusion_label
+            )
+            partial_path = os.path.join(
+                partial_results_dir, f"metrics_{lang}.json"
+            )
+            with open(partial_path, "w", encoding="utf-8") as handle:
+                json.dump(lang_data, handle, ensure_ascii=False, indent=2)
+            print(f"[checkpoint] Wrote {lang.upper()} metrics to {partial_path}")
+        except Exception as exc:  # noqa: BLE001 — best-effort checkpoint
+            print(f"[checkpoint] Failed to persist {lang.upper()} metrics: {exc}")
+
+        # Commit the cache volume so partial metrics survive.
+        try:
+            embedding_cache.commit()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[checkpoint] Volume commit failed for {lang.upper()}: {exc}")
 
     summary = metrics.summary()
     global_results = summary["languages"]
@@ -298,7 +413,6 @@ def evaluate_pipeline(
 
     submission_artifacts = None
     if collect_submission:
-        run_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         mounted_output_dir = (
             f"{CACHE_MOUNT}/{submission_volume_subdir.strip('/')}/{split}-{run_id}"
         )
@@ -318,6 +432,15 @@ def evaluate_pipeline(
         "global_results": global_results,
         "submission_predictions": submission_predictions,
         "submission_artifacts": submission_artifacts,
+        "run_id": run_id,
+        "config": {
+            "fusion_method": config.fusion_method,
+            "fusion_weights": list(config.fusion_weights)
+            if config.fusion_weights is not None
+            else None,
+            "fusion_top_k": config.fusion_top_k,
+            "final_top_k": config.final_top_k,
+        },
     }
 
 
@@ -331,8 +454,14 @@ def main(
     submission_volume_subdir: str = "submissions",
     submission_download_dir: str = "submissions",
     fusion_method: str = "rrf",
+    fusion_weight_dense: float = 0.8,
+    fusion_weight_sparse: float = 0.2,
+    fusion_top_k: int = 100,
     force_retrain_fusion: bool = False,
     global_fusion_model: bool = False,
+    reranker_name: str | None = None,
+    reranker_model_name: str | None = None,
+    languages_csv: str | None = None,
 ):
     """Local CLI entrypoint that dispatches Modal evaluation and export.
 
@@ -344,6 +473,17 @@ def main(
         export_submission_tsv: Whether to generate submission TSV files.
         submission_volume_subdir: Remote directory prefix in Modal volume.
         submission_download_dir: Local destination for downloaded submission files.
+        fusion_method: Fusion strategy (``rrf`` or ``random_forest``).
+        fusion_weight_dense: Dense retriever weight in weighted RRF.
+        fusion_weight_sparse: Sparse retriever weight in weighted RRF.
+        fusion_top_k: Candidate pool size handed to the reranker.
+        reranker_name: Optional reranker registry name override (e.g.
+            ``qwen3-reranker-8b``). Empty string disables reranking.
+        reranker_model_name: Optional model_name/path forwarded to the
+            reranker constructor. Use a ``/data/...`` path on ``clef-vol`` to
+            load a locally cached checkpoint.
+        languages_csv: Comma-separated subset of language codes to evaluate
+            (``"de"``, ``"de,fr"``, etc.). Empty/None evaluates all three.
     """
     run_output = evaluate_pipeline.remote(
         force_recompute_sparse_cache=force_recompute_sparse_cache,
@@ -353,8 +493,14 @@ def main(
         collect_submission=export_submission_tsv,
         submission_volume_subdir=submission_volume_subdir,
         fusion_method=fusion_method,
+        fusion_weight_dense=fusion_weight_dense,
+        fusion_weight_sparse=fusion_weight_sparse,
+        fusion_top_k=fusion_top_k,
         force_retrain_fusion=force_retrain_fusion,
         global_fusion_model=global_fusion_model,
+        reranker_name=reranker_name,
+        reranker_model_name=reranker_model_name,
+        languages_csv=languages_csv,
     )
 
     if export_submission_tsv:
@@ -372,3 +518,4 @@ def main(
             print(f"    - {filename}")
         print("\nRun this command to download them locally:")
         print(f"  {download_command}")
+

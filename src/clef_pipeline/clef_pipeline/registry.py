@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from .pipeline import RetrievalPipeline
 from .pipeline_config import PipelineConfig
-from .rerankers import Gemma2BReranker, NemotronReranker
-from .retrievers import BGEM3Retriever, HarrierRetriever, SparseRetriever
+from .rerankers import Gemma2BReranker, NemotronReranker, Qwen3Reranker
+from .retrievers import (
+    BGEM3Retriever,
+    HarrierRetriever,
+    SparseRetriever,
+)
 
 
 def create_retriever(name: str, params: dict | None = None):
@@ -24,7 +28,7 @@ def create_retriever(name: str, params: dict | None = None):
     params = params or {}
 
     if name == "sparse":
-        return SparseRetriever()
+        return SparseRetriever(**params)
     if name == "harrier-270m":
         return HarrierRetriever(
             model_name="microsoft/harrier-oss-v1-270m",
@@ -55,6 +59,10 @@ def create_reranker(name: str, params: dict | None = None):
         return NemotronReranker(**params)
     if name == "gemma2b":
         return Gemma2BReranker(**params)
+    if name == "qwen3-reranker-8b":
+        defaults = {"model_name": "Qwen/Qwen3-Reranker-8B"}
+        defaults.update(params)
+        return Qwen3Reranker(**defaults)
     raise ValueError(f"Unknown reranker: {name}")
 
 

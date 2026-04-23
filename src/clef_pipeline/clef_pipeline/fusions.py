@@ -141,10 +141,26 @@ class BaseFuser(ABC):
 
 
 class RRFFuser(BaseFuser):
-    """Reciprocal Rank Fusion — the existing static baseline."""
+    """Reciprocal Rank Fusion with optional per-retriever weights.
 
-    def __init__(self, rrf_k: int = 60):
+    Standard RRF uses equal weights across retrievers. When one retriever
+    dominates (e.g., a strong dense encoder vs. a weaker BM25), equal
+    weighting demotes good dense hits. Per-retriever weights let us keep
+    the complementary lexical rescue of sparse while anchoring the fused
+    ranking on the stronger retriever.
+    """
+
+    def __init__(self, rrf_k: int = 60, weights: list[float] | None = None):
+        """Initialize RRF fuser.
+
+        Args:
+            rrf_k: RRF rank-dampening constant.
+            weights: Optional per-retriever weight vector aligned with the
+                ranked_lists passed to ``fuse``. Defaults to equal weights
+                when ``None``. Missing entries default to 1.0.
+        """
         self.rrf_k = rrf_k
+        self.weights = list(weights) if weights is not None else None
 
     def fuse(
         self,
@@ -153,27 +169,45 @@ class RRFFuser(BaseFuser):
         top_k: int = 10,
         lang: str | None = None,
     ) -> list[int]:
-        """RRF ignores scores_lists and lang — uses only rank positions."""
+        """Weighted RRF ignores scores_lists and lang — uses only rank positions."""
+        weights = self._resolve_weights(len(ranked_lists))
         rrf_scores: dict[int, float] = {}
-        for ranked_list in ranked_lists:
+        for weight, ranked_list in zip(weights, ranked_lists):
+            if weight == 0.0:
+                continue
             for rank, doc_id in enumerate(ranked_list):
-                rrf_scores[doc_id] = rrf_scores.get(doc_id, 0.0) + 1.0 / (
+                rrf_scores[doc_id] = rrf_scores.get(doc_id, 0.0) + weight / (
                     self.rrf_k + rank + 1
                 )
         sorted_docs = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
         return [int(doc_id) for doc_id, _ in sorted_docs[:top_k]]
+
+    def _resolve_weights(self, n: int) -> list[float]:
+        """Return an ``n``-length weight vector, defaulting missing entries to 1.0."""
+        if self.weights is None:
+            return [1.0] * n
+        if len(self.weights) >= n:
+            return list(self.weights[:n])
+        return list(self.weights) + [1.0] * (n - len(self.weights))
 
     @staticmethod
     def _rrf_with_scores(
         ranked_lists: list[list[int]],
         k: int = 60,
         top_k: int | None = None,
+        weights: list[float] | None = None,
     ) -> tuple[list[int], dict[int, float]]:
         """Return (ranked_doc_ids, {doc_id: rrf_score}). Used internally for feature gen."""
+        if weights is None:
+            weights = [1.0] * len(ranked_lists)
         rrf_scores: dict[int, float] = {}
-        for ranked_list in ranked_lists:
+        for weight, ranked_list in zip(weights, ranked_lists):
+            if weight == 0.0:
+                continue
             for rank, doc_id in enumerate(ranked_list):
-                rrf_scores[doc_id] = rrf_scores.get(doc_id, 0.0) + 1.0 / (k + rank + 1)
+                rrf_scores[doc_id] = rrf_scores.get(doc_id, 0.0) + weight / (
+                    k + rank + 1
+                )
         sorted_docs = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
         if top_k is not None:
             sorted_docs = sorted_docs[:top_k]

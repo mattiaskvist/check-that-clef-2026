@@ -182,6 +182,8 @@ class SparseRetrieverRegressionTests(unittest.TestCase):
         retriever = SparseRetriever.__new__(SparseRetriever)
         retriever.bm25_k1 = 2.5
         retriever.bm25_b = 0.85
+        retriever.field_weights = {"title": 3, "abstract": 1}
+        retriever.add_bigrams = True
         retriever._indexed_corpus_fingerprint = "deadbeefcafefeed"
 
         path_a = retriever._cache_path("/cache", "sparse_de", ["query a"], "de", 2000)
@@ -199,10 +201,14 @@ class SparseRetrieverRegressionTests(unittest.TestCase):
         retriever = SparseRetriever.__new__(SparseRetriever)
         retriever.bm25_k1 = 2.5
         retriever.bm25_b = 0.85
+        retriever.field_weights = {"title": 3, "abstract": 1}
+        retriever.add_bigrams = True
+        retriever.translation_target_lang = "en"
         retriever.bm25_model = _FakeBM25()
         retriever._indexed_corpus_fingerprint = "deadbeefcafefeed"
         retriever._query_rankings_by_name = {}
         retriever._query_scores_by_name = {}
+        retriever._stemmers = {}
 
         def _score_query(self, query, lang="auto", top_k=None):
             return (
@@ -210,7 +216,24 @@ class SparseRetrieverRegressionTests(unittest.TestCase):
                 np.asarray([0.7, 0.3], dtype=np.float32),
             )
 
+        def _batch_translate_queries(self, queries, source_lang, cache_dir):
+            return list(queries)
+
+        def _fake_tokenize(self, text, language="en", add_bigrams=None):
+            return text.split()
+
+        class _FakeModel:
+            doc_len = [1, 1, 1]
+
+            def get_scores(self_inner, tokens):
+                return np.asarray([0.0, 0.3, 0.7], dtype=np.float32)
+
+        retriever.bm25_model = _FakeModel()
         retriever._score_query = _score_query.__get__(retriever, SparseRetriever)
+        retriever._batch_translate_queries = _batch_translate_queries.__get__(
+            retriever, SparseRetriever
+        )
+        retriever.tokenize = _fake_tokenize.__get__(retriever, SparseRetriever)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_path = retriever._cache_path(

@@ -38,8 +38,13 @@ class RetrievalPipeline:
             self.retrievers[name] = retrievers[name]
 
         self.reranker = reranker if self.config.reranker.enabled else None
+        fusion_weights = (
+            list(self.config.fusion_weights)
+            if self.config.fusion_weights is not None
+            else None
+        )
         if self.config.fusion_method == "rrf":
-            self.fuser = RRFFuser()
+            self.fuser = RRFFuser(weights=fusion_weights)
         elif self.config.fusion_method == "random_forest":
             self.fuser = RandomForestFuser()
         else:
@@ -279,9 +284,8 @@ class RetrievalPipeline:
                 )
 
             search_with_scores = getattr(retriever, "search_with_scores", None)
-            if self.config.fusion_method == "random_forest" and callable(
-                search_with_scores
-            ):
+            needs_scores = self.config.fusion_method == "random_forest"
+            if needs_scores and callable(search_with_scores):
                 ranked_indices, scores = search_with_scores(
                     query_idx, cache_name=cache_name
                 )

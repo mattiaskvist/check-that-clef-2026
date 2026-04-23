@@ -3,35 +3,51 @@
 import re
 
 import numpy as np
-from deep_translator import GoogleTranslator
-from deep_translator.exceptions import (
-    NotValidLength,
-    NotValidPayload,
-    RequestError,
-    TranslationNotFound,
-)
-from nltk.stem import LancasterStemmer
+from nltk.stem import LancasterStemmer, SnowballStemmer
 from rank_bm25 import BM25Plus
 
 from .interfaces import BaseRetriever
+from .translation_cache import TranslationCache, translate_batch
 from .utils import STOPWORDS
+
+
+DEFAULT_FIELD_WEIGHTS: dict[str, int] = {
+    "title": 3,
+    "abstract": 1,
+    "authors": 1,
+    "venue": 1,
+}
+
+
+def _select_stemmer(language: str):
+    """Return an NLTK stemmer suitable for ``language``.
+
+    German and French get their own Snowball stemmer instead of the
+    English-only Lancaster stemmer that the original implementation used
+    for all languages after translation. Falling back to Lancaster for
+    English preserves existing behavior when tokenizing already-English
+    (or post-translation) text.
+    """
+    lang = (language or "en").lower()
+    if lang.startswith("de"):
+        return SnowballStemmer("german")
+    if lang.startswith("fr"):
+        return SnowballStemmer("french")
+    return LancasterStemmer()
 
 
 class BGEM3Retriever(BaseRetriever):
     """Dense retriever using SentenceTransformer BGE-M3 embeddings."""
 
     def __init__(self, model_name: str = "BAAI/bge-m3", lora_id: str = None):
-        """Load dense retriever model and optional LoRA adapters.
+        """Configure dense retriever; weights are loaded lazily on cache miss.
 
         Args:
             model_name: Base embedding model id.
             lora_id: Optional LoRA adapter id to inject into the base model.
         """
-        import os
-
         import torch
-        from peft import PeftModel
-        from sentence_transformers import SentenceTransformer, util
+        from sentence_transformers import util
 
         self.util = util
         self.torch = torch
@@ -39,15 +55,26 @@ class BGEM3Retriever(BaseRetriever):
         self.lora_id = lora_id
         self.query_embeddings = None
         self._query_embeddings_by_name = {}
+        # Lazy: only instantiated when we actually need to encode (cache miss).
+        # Warm-cache evaluation runs skip the multi-gigabyte weight download.
+        self.model = None
 
-        print(f"Loading Dense Retriever ({model_name})...")
-        self.model = SentenceTransformer(model_name, device="cuda")
+    def _ensure_model_loaded(self):
+        """Load base encoder + optional LoRA weights on first encode call."""
+        if self.model is not None:
+            return
+        import os
 
-        if lora_id:
-            print(f"Injecting LoRA adapters from {lora_id}...")
+        from peft import PeftModel
+        from sentence_transformers import SentenceTransformer
+
+        print(f"Loading Dense Retriever ({self.model_name})...")
+        self.model = SentenceTransformer(self.model_name, device="cuda")
+        if self.lora_id:
+            print(f"Injecting LoRA adapters from {self.lora_id}...")
             hf_token = os.environ.get("HF_TOKEN")
             self.model[0].auto_model = PeftModel.from_pretrained(
-                self.model[0].auto_model, lora_id, token=hf_token
+                self.model[0].auto_model, self.lora_id, token=hf_token
             )
             self.model = self.model.to("cuda")
 
@@ -73,7 +100,7 @@ class BGEM3Retriever(BaseRetriever):
     def _load_or_encode(
         self,
         texts: list[str],
-        encode_fn,
+        encode_attr: str,
         cache_path: str | None,
         label: str,
         force_recompute: bool = False,
@@ -82,7 +109,9 @@ class BGEM3Retriever(BaseRetriever):
 
         Args:
             texts: Input texts to encode.
-            encode_fn: Callable used for model encoding.
+            encode_attr: Name of the model method to call for encoding
+                (e.g. ``"encode_document"``). Resolved lazily after weights
+                are loaded so cache hits never trigger a model load.
             cache_path: Optional on-disk cache location.
             label: Human-readable label for logging.
             force_recompute: Bypass existing cache when true.
@@ -101,6 +130,8 @@ class BGEM3Retriever(BaseRetriever):
         if force_recompute and cache_path and os.path.exists(cache_path):
             print(f"[cache bypass] Recomputing {label} from source texts.")
 
+        self._ensure_model_loaded()
+        encode_fn = getattr(self.model, encode_attr)
         print(f"Encoding {len(texts)} {label}...")
         embs = encode_fn(
             texts, convert_to_tensor=True, show_progress_bar=True, device="cuda"
@@ -152,7 +183,7 @@ class BGEM3Retriever(BaseRetriever):
         path = self._cache_path(cache_dir, "documents.pt", corpus)
         self.embeddings = self._load_or_encode(
             corpus,
-            self.model.encode_document,
+            "encode_document",
             path,
             "document embeddings",
             force_recompute=force_recompute,
@@ -176,7 +207,7 @@ class BGEM3Retriever(BaseRetriever):
         path = self._cache_path(cache_dir, f"{cache_name}.pt", queries)
         query_embeddings = self._load_or_encode(
             queries,
-            self.model.encode_query,
+            "encode_query",
             path,
             f"query embeddings ({cache_name})",
             force_recompute=force_recompute,
@@ -221,33 +252,93 @@ class HarrierRetriever(BaseRetriever):
     )
 
     def __init__(
-        self, model_name: str = "microsoft/harrier-oss-v1-27b", batch_size: int = 2
+        self,
+        model_name: str = "microsoft/harrier-oss-v1-27b",
+        batch_size: int = 1,
+        adapter_path: str | None = None,
+        max_seq_length: int = 1024,
     ):
         """Load Harrier embedding model and runtime settings.
 
         Args:
             model_name: Harrier model id.
-            batch_size: Embedding batch size for encode calls.
+            batch_size: Embedding batch size for encode calls. Defaults to 1
+                because Harrier-27B + sliding-window attention masks can push
+                an A100-80GB over the edge for any batch > 1; document
+                encoding is cached so the one-time cost is tolerable.
+            adapter_path: Optional path to a PEFT LoRA adapter directory. When
+                set, the adapter is loaded on top of the base model. The cache
+                key incorporates the adapter's basename so fine-tuned and base
+                embeddings don't clash in the cache volume.
+            max_seq_length: Hard cap on tokenized sequence length. Harrier
+                inherits Gemma3's 131k-token max_position_embeddings by
+                default, which makes attention O(seq_len^2) OOM on long
+                abstracts/author lists. 1024 captures title + abstract body
+                for essentially all scientific papers and keeps attention
+                memory bounded (~256 MB per layer at batch=1).
         """
         import torch
-        from sentence_transformers import SentenceTransformer, util
+        from sentence_transformers import util
 
         self.util = util
         self.torch = torch
         self.model_name = model_name
         self.batch_size = batch_size
+        self.adapter_path = adapter_path
+        self.max_seq_length = int(max_seq_length)
         self.query_embeddings = None
         self._query_embeddings_by_name = {}
         self.prompt = self.DEFAULT_QUERY_PROMPT
+        # Lazy: weights are only loaded when a cache miss forces encoding.
+        # Warm-cache evaluation runs avoid the multi-minute 27B model load.
+        self.model = None
 
-        print(f"Loading Dense Retriever ({model_name})...")
+    def _ensure_model_loaded(self) -> None:
+        """Load SentenceTransformer weights and optional adapter on first use."""
+        if self.model is not None:
+            return
+        from sentence_transformers import SentenceTransformer
+
+        print(f"Loading Dense Retriever ({self.model_name})...")
+        # NOTE: transformers<4.55 uses ``torch_dtype``; 4.55+ renamed the
+        # argument to ``dtype``. We're pinned to <4.55 to avoid the vmap
+        # sliding-window mask OOM, so keep the old name here.
         self.model = SentenceTransformer(
-            model_name, device="cuda", model_kwargs={"dtype": "auto"}
+            self.model_name, device="cuda", model_kwargs={"torch_dtype": "auto"}
+        )
+        self.model.max_seq_length = int(self.max_seq_length)
+        if self.adapter_path:
+            self._attach_adapter(self.adapter_path)
+
+    def _attach_adapter(self, adapter_path: str) -> None:
+        """Wrap the underlying transformer with a PEFT adapter."""
+        from peft import PeftModel
+
+        print(f"Attaching LoRA adapter from {adapter_path}...")
+        self.model[0].auto_model = PeftModel.from_pretrained(
+            self.model[0].auto_model, adapter_path
         )
 
     def _cache_key(self) -> str:
-        """Build cache namespace identifier for model settings."""
-        return self.model_name.replace("/", "--")
+        """Build cache namespace identifier for model settings.
+
+        ``max_seq_length`` is part of the key because truncation at encode
+        time materially changes the document embedding for long articles;
+        a 1024-token truncation produces different vectors than 8192.
+        """
+        base = self.model_name.replace("/", "--")
+        max_seq_length = getattr(self, "max_seq_length", None) or int(
+            getattr(getattr(self, "model", None), "max_seq_length", 0) or 0
+        )
+        if max_seq_length:
+            base = f"{base}--msl{int(max_seq_length)}"
+        adapter_path = getattr(self, "adapter_path", None)
+        if adapter_path:
+            import os
+
+            tag = os.path.basename(os.path.normpath(adapter_path))
+            return f"{base}--adapter-{tag}"
+        return base
 
     @staticmethod
     def _texts_fingerprint(texts: list[str]) -> str:
@@ -306,6 +397,7 @@ class HarrierRetriever(BaseRetriever):
         if force_recompute and cache_path and os.path.exists(cache_path):
             print(f"[cache bypass] Recomputing {label} from source texts.")
 
+        self._ensure_model_loaded()
         print(f"Encoding {len(texts)} {label}...")
         embs = self.model.encode(
             texts,
@@ -361,7 +453,10 @@ class HarrierRetriever(BaseRetriever):
         """Free the embedding model from GPU. Computed embeddings are kept."""
         import gc
 
+        if self.model is None:
+            return
         del self.model
+        self.model = None
         gc.collect()
         self.torch.cuda.empty_cache()
         print("Embedding model unloaded, GPU memory freed.")
@@ -422,24 +517,71 @@ class HarrierRetriever(BaseRetriever):
 
 
 class SparseRetriever(BaseRetriever):
-    """A retriever that performs sparse retrieval."""
+    """BM25+ retriever with per-language analyzers and field-weighted indexing.
 
-    def __init__(self):
-        """Initialize sparse retriever parameters and caches."""
+    Improvements vs. the original implementation:
+
+    - Per-query ``GoogleTranslator`` calls are replaced with a single batched
+      translation pass at indexing time, persisted in a disk cache (see
+      ``translation_cache.py``). Results are deterministic and cacheable.
+    - Stemmer is selected by the *source* language: English keeps Lancaster,
+      German/French use their Snowball stemmers rather than getting run
+      through a stemmer that only knows English.
+    - ``document_to_text`` uses per-field repetition weights instead of the
+      hard-coded ``title * 8`` hack, and exposes those weights via config.
+    - ``bm25_k1``/``bm25_b`` default to the conventional ``1.5/0.75`` values
+      and are explicit constructor args to make grid searches straightforward.
+    """
+
+    def __init__(
+        self,
+        bm25_k1: float = 1.5,
+        bm25_b: float = 0.75,
+        field_weights: dict[str, int] | None = None,
+        add_bigrams: bool = True,
+        translation_target_lang: str = "en",
+    ):
+        """Initialize sparse retriever parameters and caches.
+
+        Args:
+            bm25_k1: BM25+ ``k1`` saturation parameter.
+            bm25_b: BM25+ ``b`` length-normalization parameter.
+            field_weights: Repetition counts applied to each document field
+                when serializing for indexing. Defaults to ``{"title": 3,
+                "abstract": 1, "authors": 1, "venue": 1}``.
+            add_bigrams: Whether to include token bigrams alongside unigrams.
+            translation_target_lang: Language to translate non-English queries
+                into before tokenization. Must match how the corpus was indexed.
+        """
         self.bm25_model = None
-        self.bm25_k1 = 2.5
-        self.bm25_b = 0.85
-        self.stemmer = LancasterStemmer()
+        self.bm25_k1 = float(bm25_k1)
+        self.bm25_b = float(bm25_b)
+        self.field_weights = dict(field_weights or DEFAULT_FIELD_WEIGHTS)
+        self.add_bigrams = bool(add_bigrams)
+        self.translation_target_lang = translation_target_lang
         self._indexed_corpus_fingerprint = None
         self._query_rankings_by_name = {}
         self._query_scores_by_name = {}
+        self._stemmers: dict[str, object] = {"en": LancasterStemmer()}
 
     def _cache_key(self) -> str:
         """Build cache namespace identifier for sparse retrieval settings."""
+        field_weight_tag = "-".join(
+            f"{name}{weight}"
+            for name, weight in sorted(self.field_weights.items())
+        )
         return (
             f"bm25plus-k1_{self.bm25_k1:.2f}-b_{self.bm25_b:.2f}"
-            "-stem_lancaster-bigrams_1-translate_v1"
+            f"-stem_pl_v2-bigrams_{int(self.add_bigrams)}"
+            f"-fields_{field_weight_tag}-translate_v2"
         )
+
+    def _get_stemmer(self, language: str):
+        """Cache one stemmer per language."""
+        lang = (language or "en").lower()
+        if lang not in self._stemmers:
+            self._stemmers[lang] = _select_stemmer(lang)
+        return self._stemmers[lang]
 
     @staticmethod
     def _texts_fingerprint(texts: list[str]) -> str:
@@ -511,8 +653,10 @@ class SparseRetriever(BaseRetriever):
         if self.bm25_model is None:
             raise ValueError("SparseRetriever is not indexed. Call index(...) first.")
 
-        translated_query = self._translate_query(query, lang)
-        tokenized_query = self.tokenize(translated_query)
+        translated_query = self._translate_single_query(query, lang)
+        # Keep the Lancaster (English) stemmer on post-translation query text
+        # so it matches how the corpus was tokenized at index time.
+        tokenized_query = self.tokenize(translated_query, language="en")
         scores = np.asarray(
             self.bm25_model.get_scores(tokenized_query), dtype=np.float32
         )
@@ -553,11 +697,19 @@ class SparseRetriever(BaseRetriever):
             scores[query_idx], dtype=np.float32
         )
 
-    def tokenize(self, text: str, add_bigrams: bool = True) -> list[str]:
-        """Tokenize text with punctuation, stopword removal, stemming, and optional bigrams."""
+    def tokenize(
+        self,
+        text: str,
+        language: str = "en",
+        add_bigrams: bool | None = None,
+    ) -> list[str]:
+        """Tokenize text with punctuation, stopword removal, language-aware stemming."""
+        if add_bigrams is None:
+            add_bigrams = self.add_bigrams
         text = re.sub(r"[^\w\s]", " ", text.lower())
         tokens = text.split()
-        unigrams = [self.stemmer.stem(t) for t in tokens if t not in STOPWORDS]
+        stemmer = self._get_stemmer(language)
+        unigrams = [stemmer.stem(t) for t in tokens if t not in STOPWORDS]
         if add_bigrams and len(unigrams) >= 2:
             bigrams = [
                 f"{unigrams[i]}_{unigrams[i + 1]}" for i in range(len(unigrams) - 1)
@@ -572,7 +724,9 @@ class SparseRetriever(BaseRetriever):
             collection: Document dictionaries with article metadata.
         """
         corpus = [self.document_to_text(doc) for doc in collection]
-        tokenized_corpus = [self.tokenize(text) for text in corpus]
+        # Corpus is mostly English scientific abstracts; use the English
+        # (Lancaster) tokenizer for document-side indexing.
+        tokenized_corpus = [self.tokenize(text, language="en") for text in corpus]
         self.bm25_model = BM25Plus(tokenized_corpus, k1=self.bm25_k1, b=self.bm25_b)
         self._indexed_corpus_fingerprint = self._texts_fingerprint(corpus)
         self._query_rankings_by_name.clear()
@@ -623,17 +777,23 @@ class SparseRetriever(BaseRetriever):
         if force_recompute and cache_path and os.path.exists(cache_path):
             print(f"[cache bypass] Recomputing sparse query cache ({cache_name}).")
 
+        translated_queries = self._batch_translate_queries(
+            queries, source_lang=lang, cache_dir=cache_dir
+        )
+
         corpus_size = len(getattr(self.bm25_model, "doc_len", []))
         effective_top_k = corpus_size if top_k is None else min(top_k, corpus_size)
         rankings = np.empty((len(queries), effective_top_k), dtype=np.int32)
         scores = np.empty((len(queries), effective_top_k), dtype=np.float32)
 
-        for query_idx, query_text in enumerate(queries):
-            ranked_indices, ranked_scores = self._score_query(
-                query_text, lang=lang, top_k=effective_top_k
+        for query_idx, translated_query in enumerate(translated_queries):
+            tokenized_query = self.tokenize(translated_query, language="en")
+            query_scores = np.asarray(
+                self.bm25_model.get_scores(tokenized_query), dtype=np.float32
             )
-            rankings[query_idx] = ranked_indices
-            scores[query_idx] = ranked_scores
+            ranked_indices = np.argsort(query_scores)[::-1][:effective_top_k]
+            rankings[query_idx] = ranked_indices.astype(np.int32)
+            scores[query_idx] = query_scores[ranked_indices].astype(np.float32)
 
         self._query_rankings_by_name[cache_name] = rankings
         self._query_scores_by_name[cache_name] = scores
@@ -645,55 +805,74 @@ class SparseRetriever(BaseRetriever):
                 f"[cache miss] Saved sparse query cache ({cache_name}) to {cache_path}"
             )
 
-    def _translate_query(self, text: str, lang: str = "auto") -> str:
-        """Helper function to translate non-English queries to English.
+    def _translation_cache_path(self, cache_dir: str | None) -> str | None:
+        """Path to the on-disk translation cache shared across query calls."""
+        if cache_dir is None:
+            return None
+        import os
 
-        Automatically detects language if lang='auto', otherwise uses the provided language code.
+        return os.path.join(cache_dir, "sparse", "translations_v2.json")
 
-        Args:
-            text (str): The original query text.
-            lang (str): The language code of the query (e.g., 'en', 'de', 'fr', 'auto').
+    def _batch_translate_queries(
+        self,
+        queries: list[str],
+        source_lang: str,
+        cache_dir: str | None,
+    ) -> list[str]:
+        """Translate ``queries`` once, using a persistent on-disk cache when available.
 
-        Returns:
-            str: The translated query text if translation was successful, otherwise the original text.
+        Also preserves rare original-language tokens alongside the translation
+        so downstream BM25 can still match names, numbers, and proper nouns
+        that survive translation poorly.
         """
-        if lang == "en":
-            return text
+        if source_lang == self.translation_target_lang:
+            return list(queries)
 
-        translator = GoogleTranslator(source=lang, target="en")
-
-        # Normalize text
-        normalized_text = re.sub(r"https?://\S+|www\.\S+|@\w+", " ", text)
-        normalized_text = re.sub(
-            r"[\U0001F300-\U0001FAFF\U00002700-\U000027BF\U000024C2-\U0001F251]+",
-            " ",
-            normalized_text,
+        cache = TranslationCache(self._translation_cache_path(cache_dir))
+        translated = translate_batch(
+            queries,
+            source_lang=source_lang,
+            target_lang=self.translation_target_lang,
+            cache=cache,
         )
-        normalized_text = normalized_text.replace("#", " ")
-        normalized_text = re.sub(r"\s+", " ", normalized_text).strip()
 
-        if not normalized_text:
-            return text
-
-        try:
-            translated_text = translator.translate(text=normalized_text)
-            original_terms: list[str] = []
-            seen: set[str] = set()
-
-            for tok in re.sub(r"[^\w\s]", " ", normalized_text.lower()).split():
-                if tok in seen or tok in STOPWORDS or len(tok) < 6 or not tok.isalpha():
-                    continue
-                seen.add(tok)
-                original_terms.append(tok)
-
-            filtered_original = " ".join(original_terms)
-            return (
-                f"{translated_text} {filtered_original}".strip()
-                if filtered_original
-                else translated_text
+        augmented: list[str] = []
+        for original, translated_text in zip(queries, translated):
+            augmented.append(
+                self._augment_with_original_terms(
+                    original=original, translated=translated_text
+                )
             )
-        except (TranslationNotFound, NotValidPayload, NotValidLength, RequestError):
-            return normalized_text or text
+        return augmented
+
+    @staticmethod
+    def _augment_with_original_terms(original: str, translated: str) -> str:
+        """Append long, non-stopword original tokens to the translated query."""
+        seen: set[str] = set()
+        kept: list[str] = []
+        normalized = re.sub(r"[^\w\s]", " ", original.lower())
+        for token in normalized.split():
+            if token in seen or token in STOPWORDS or len(token) < 6 or not token.isalpha():
+                continue
+            seen.add(token)
+            kept.append(token)
+        if not kept:
+            return translated
+        return f"{translated} {' '.join(kept)}".strip()
+
+    def _translate_single_query(self, text: str, lang: str) -> str:
+        """Translate one query without using the persistent cache (for ad-hoc search)."""
+        if lang == self.translation_target_lang:
+            return text
+        translated = translate_batch(
+            [text],
+            source_lang=lang,
+            target_lang=self.translation_target_lang,
+            cache=None,
+        )
+        return self._augment_with_original_terms(
+            original=text, translated=translated[0]
+        )
 
     def search_with_scores(
         self,
@@ -751,13 +930,19 @@ class SparseRetriever(BaseRetriever):
     def document_to_text(self, doc: dict) -> str:
         """Turn the article dict into a single string for indexing and retrieval.
 
+        Each field is repeated according to ``self.field_weights``, which
+        lets BM25 approximate field-weighted scoring without maintaining
+        separate per-field indices. Defaults give titles ~3x the weight of
+        abstracts (down from the original 8x hack), since abstracts contain
+        most of the lexical signal that links scientific tweets to papers.
+
         Args:
             doc (dict): dict with keys "title", "abstract", "pubkey", "authors", "venue".
                 Authors is may be just names, but could also include universities, addresses, etc.
                 Venue is the name of the conference/journal where the article was published. Both may be empty strings.
 
         Returns:
-            str: A single string representation of the article
+            str: A single string representation of the article.
         """
         title = (doc.get("title") or "").strip()
         abstract = (doc.get("abstract") or "").strip()
@@ -768,5 +953,20 @@ class SparseRetriever(BaseRetriever):
             else str(authors_raw)
         ).strip()
         venue = str(doc.get("venue") or "").strip()
-        # Repeat title to boost its importance
-        return f"{title} {title} {title} {title} {title} {title} {title} {title} {abstract} {authors} {venue}".strip()
+
+        fields = {
+            "title": title,
+            "abstract": abstract,
+            "authors": authors,
+            "venue": venue,
+        }
+
+        parts: list[str] = []
+        for name, value in fields.items():
+            if not value:
+                continue
+            weight = max(0, int(self.field_weights.get(name, 1)))
+            parts.extend([value] * weight)
+
+        return " ".join(parts).strip()
+

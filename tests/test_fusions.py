@@ -138,6 +138,25 @@ class TestRRFFuser:
         r2 = fuser.fuse([ranked, ranked], top_k=4)
         assert r1 == r2
 
+    def test_weighted_rrf_prefers_heavier_retriever(self):
+        dense = [0, 1, 2, 3]
+        sparse = [3, 2, 1, 0]
+
+        equal = RRFFuser(weights=[1.0, 1.0]).fuse([dense, sparse], top_k=4)
+        dense_heavy = RRFFuser(weights=[5.0, 1.0]).fuse([dense, sparse], top_k=4)
+        sparse_heavy = RRFFuser(weights=[1.0, 5.0]).fuse([dense, sparse], top_k=4)
+
+        assert dense_heavy[0] == 0
+        assert sparse_heavy[0] == 3
+        assert equal != dense_heavy or equal != sparse_heavy
+
+    def test_weighted_rrf_zero_weight_ignores_retriever(self):
+        dense = [0, 1, 2]
+        sparse = [9, 8, 7]
+        fuser = RRFFuser(weights=[1.0, 0.0])
+        result = fuser.fuse([dense, sparse], top_k=3)
+        assert result == [0, 1, 2]
+
 
 # ---------------------------------------------------------------------------
 # RandomForestFuser
