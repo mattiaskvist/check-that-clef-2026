@@ -81,91 +81,91 @@ The Random Forest fuser trains automatically the first time it is needed and sav
 
 ### 1. Vanilla BM25 Sparse Retriever
 ```bash
-uv run modal run -m clef_pipeline.main \
+uv run modal run -d -m clef_pipeline.main \
   --profile custom --dense-model "" --disable-reranker --sparse-vanilla \
   --split dev --export-submission-tsv --metrics-output-file metrics_1_vanilla_bm25.json
 ```
 
 ### 2. Optimized Sparse Retriever
 ```bash
-uv run modal run -m clef_pipeline.main \
+uv run modal run -d -m clef_pipeline.main \
   --profile custom --dense-model "" --disable-reranker \
   --split dev --export-submission-tsv --metrics-output-file metrics_2_optimized_sparse.json
 ```
 
 ### 3. BGE-M3 Dense Retriever Only
 ```bash
-uv run modal run -m clef_pipeline.main \
+uv run modal run -d -m clef_pipeline.main \
   --profile custom --dense-model "bge-m3" --disable-sparse --disable-reranker \
   --split dev --export-submission-tsv --metrics-output-file metrics_3_bgem3_dense.json
 ```
 
 ### 4. Harrier 27B Dense Retriever Only
 ```bash
-uv run modal run -m clef_pipeline.main \
+uv run modal run -d -m clef_pipeline.main \
   --profile custom --dense-model "harrier-27b" --disable-sparse --disable-reranker \
   --split dev --export-submission-tsv --metrics-output-file metrics_4_harrier_dense.json
 ```
 
 ### 5. Hybrid (Optimized Sparse + Harrier) + RRF Fusion
 ```bash
-uv run modal run -m clef_pipeline.main \
+uv run modal run -d -m clef_pipeline.main \
   --profile custom --dense-model "harrier-27b" --fusion-method "rrf" --disable-reranker \
   --split dev --export-submission-tsv --metrics-output-file metrics_5_hybrid_rrf.json
 ```
 
 ### 6. Hybrid (Optimized Sparse + Harrier) + Random Forest Fusion
 ```bash
-uv run modal run -m clef_pipeline.main \
+uv run modal run -d -m clef_pipeline.main \
   --profile custom --dense-model "harrier-27b" --fusion-method "random_forest" --disable-reranker \
   --split dev --export-submission-tsv --metrics-output-file metrics_6_hybrid_rf.json
 ```
 
 ### 7. Hybrid + Random Forest Fusion + Nemotron Reranker
 ```bash
-uv run modal run -m clef_pipeline.main \
+uv run modal run -d -m clef_pipeline.main \
   --profile custom --dense-model "harrier-27b" --fusion-method "random_forest" \
   --split dev --export-submission-tsv --metrics-output-file metrics_7_hybrid_rf_nemotron.json
 ```
 
 ### 8. Hybrid + RRF Fusion + Nemotron Reranker
 ```bash
-uv run modal run -m clef_pipeline.main \
+uv run modal run -d -m clef_pipeline.main \
   --profile custom --dense-model "harrier-27b" --fusion-method "rrf" \
   --split dev --export-submission-tsv --metrics-output-file metrics_8_hybrid_rrf_nemotron.json
 ```
 
 ### 9. Harrier 27B Dense Only + Nemotron Reranker
 ```bash
-uv run modal run -m clef_pipeline.main \
+uv run modal run -d -m clef_pipeline.main \
   --profile custom --dense-model "harrier-27b" --disable-sparse \
   --split dev --export-submission-tsv --metrics-output-file metrics_9_harrier_nemotron.json
 ```
 
 ### 10. Hybrid + Random Forest Fusion + Gemma Reranker
 ```bash
-uv run modal run -m clef_pipeline.main \
+uv run modal run -d -m clef_pipeline.main \
   --profile custom --dense-model "harrier-27b" --fusion-method "random_forest" --reranker-model "gemma2b" \
   --split dev --export-submission-tsv --metrics-output-file metrics_10_hybrid_rf_gemma.json
 ```
 
 ### 11. Hybrid + RRF Fusion + Gemma Reranker
 ```bash
-uv run modal run -m clef_pipeline.main \
+uv run modal run -d -m clef_pipeline.main \
   --profile custom --dense-model "harrier-27b" --fusion-method "rrf" --reranker-model "gemma2b" \
   --split dev --export-submission-tsv --metrics-output-file metrics_11_hybrid_rrf_gemma.json
 ```
 
 ### 12. Hybrid + Random Forest Fusion + Jina Reranker
 ```bash
-uv run modal run -m clef_pipeline.main \
+uv run modal run -d -m clef_pipeline.main \
   --profile custom --dense-model "harrier-27b" --fusion-method "random_forest" --reranker-model "jina-v3" \
   --split dev --export-submission-tsv --metrics-output-file metrics_12_hybrid_rf_jina.json
 ```
 
 ### 13. Hybrid + RRF Fusion + Jina Reranker
 ```bash
-uv run modal run -m clef_pipeline.main \
+uv run modal run -d -m clef_pipeline.main \
   --profile custom --dense-model "harrier-27b" --fusion-method "rrf" --reranker-model "jina-v3" \
   --split dev --export-submission-tsv --metrics-output-file metrics_13_hybrid_rrf_jina.json
 ```

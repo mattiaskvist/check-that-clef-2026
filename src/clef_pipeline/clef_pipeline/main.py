@@ -19,17 +19,19 @@ image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install("torch", extra_index_url="https://download.pytorch.org/whl/cu121")
     .pip_install(
-        "sentence-transformers",
+        "sentence-transformers <= 5.3.0",
         "peft",
         "rank_bm25",
         "datasets",
         "tqdm",
-        "transformers",
+        "transformers <= 5.5.1",
         "accelerate",
         "nltk",
         "Pillow",
         "torchvision",
         "deep-translator",
+        "huggingface-hub <=	1.9.2",
+        
     )
 )
 
