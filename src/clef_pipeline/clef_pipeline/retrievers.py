@@ -626,12 +626,11 @@ class SparseRetriever(BaseRetriever):
             return unigrams + bigrams
         return unigrams
 
-    def index(self, collection: list[dict], lang: str = "en"):
+    def index(self, collection: list[dict]):
         """Index a document collection into a BM25+ model.
 
         Args:
             collection: Document dictionaries with article metadata.
-            lang: Language key used for document preprocessing.
         """
         from collections import defaultdict
 
@@ -675,7 +674,7 @@ class SparseRetriever(BaseRetriever):
                         scores[doc_id] += idf * (tf * (self.k1 + 1) / denom)
                 return scores
 
-        corpus = [self.document_to_text(doc, lang) for doc in collection]
+        corpus = [self.document_to_text(doc) for doc in collection]
         tokenized_corpus = [self.tokenize(text) for text in corpus]
         self.bm25_model = FastBM25(tokenized_corpus, k1=self.bm25_k1, b=self.bm25_b)
         self._docs_tokens = tokenized_corpus
@@ -940,7 +939,7 @@ class SparseRetriever(BaseRetriever):
         )
         return ranked_indices
 
-    def document_to_text(self, doc: dict, lang: str) -> str:
+    def document_to_text(self, doc: dict) -> str:
         """Turn the article dict into a single string for indexing and retrieval.
 
         Args:
@@ -954,13 +953,4 @@ class SparseRetriever(BaseRetriever):
         title = (doc.get("title") or "").strip()
         abstract = (doc.get("abstract") or "").strip()
         venue = str(doc.get("venue") or "").strip()
-        authors_raw = doc.get("authors") or ""
-        authors = (
-            " ".join(str(part) for part in authors_raw)
-            if isinstance(authors_raw, list)
-            else str(authors_raw)
-        ).strip()
-        if lang == 'de':
-            return " ".join([title, title, title, title, title, abstract, authors, venue, venue]).strip()
-
         return " ".join([title, title, title, venue, venue, abstract]).strip()

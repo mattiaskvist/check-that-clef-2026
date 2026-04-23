@@ -91,7 +91,6 @@ class RetrievalPipeline:
         name: str,
         retriever: object,
         article_texts: list[str],
-        collection_lang: str = "en",
         force_recompute_dense_documents: bool = False,
         cache_dir: str | None = None,
     ):
@@ -101,15 +100,11 @@ class RetrievalPipeline:
             name: Retriever registry name.
             retriever: Retriever instance.
             article_texts: Textified collection documents.
-            collection_lang: Language key for sparse document preprocessing.
             force_recompute_dense_documents: Whether dense caches are bypassed.
             cache_dir: Cache root directory for embedders.
         """
         if name.startswith("sparse"):
-            try:
-                retriever.index(self.collection_documents, lang=collection_lang)
-            except TypeError:
-                retriever.index(self.collection_documents)
+            retriever.index(self.collection_documents)
             return
 
         try:
@@ -179,7 +174,6 @@ class RetrievalPipeline:
         self,
         collection_documents: list[dict],
         custom_documents: list[dict] | None = None,
-        lang: str = "en",
         cache_dir: str | None = None,
         force_recompute_dense_documents: bool = False,
     ):
@@ -188,7 +182,6 @@ class RetrievalPipeline:
         Args:
             collection_documents: Base collection records.
             custom_documents: Optional user additions or overrides by ``pubkey``.
-            lang: Collection language key for sparse preprocessing.
             cache_dir: Cache root path for dense embedding artifacts.
             force_recompute_dense_documents: Whether dense doc cache is bypassed.
         """
@@ -214,7 +207,6 @@ class RetrievalPipeline:
                 retriever_name,
                 retriever,
                 article_texts=article_texts,
-                collection_lang=lang,
                 force_recompute_dense_documents=force_recompute_dense_documents,
                 cache_dir=cache_dir,
             )
