@@ -450,6 +450,52 @@ class SparseRetriever(BaseRetriever):
         self._query_rankings_by_name = {}
         self._query_scores_by_name = {}
 
+    @staticmethod
+    def _extract_german_author_tokens(text: str) -> list[str]:
+        """Extract likely person-name tokens from German queries."""
+        if not text:
+            return []
+
+        candidates = re.findall(
+            r"\b[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]{2,}\b",
+            text,
+            flags=re.UNICODE,
+        )
+        tokens: list[str] = []
+        seen: set[str] = set()
+        for token in candidates:
+            normalized = token.strip("-").lower()
+            if (
+                not normalized
+                or normalized in seen
+                or normalized in STOPWORDS
+                or len(normalized) <= 1
+            ):
+                continue
+            seen.add(normalized)
+            tokens.append(normalized)
+        return tokens
+
+    @staticmethod
+    def _author_field_tokens(text: str) -> list[str]:
+        """Tokenize author strings into dedicated index tokens.
+
+        Prefixing ensures author matches only happen for queries that also emit
+        `author_...` tokens (German-only heuristic).
+        """
+        if not text:
+            return []
+        raw = re.sub(r"[^\w\s-]", " ", text.lower())
+        toks: list[str] = []
+        seen: set[str] = set()
+        for tok in raw.split():
+            tok = tok.strip("-")
+            if not tok or tok in seen or tok in STOPWORDS or len(tok) <= 1:
+                continue
+            seen.add(tok)
+            toks.append(f"author_{tok}")
+        return toks
+
     def _cache_key(self) -> str:
         """Build cache namespace identifier for sparse retrieval settings."""
         use_bigrams = getattr(self, "use_bigrams", True)
@@ -537,6 +583,10 @@ class SparseRetriever(BaseRetriever):
             translated_query = query
 
         tokenized_query = self.tokenize(translated_query)
+        if lang == "de":
+            tokenized_query.extend(
+                f"author_{tok}" for tok in self._extract_german_author_tokens(query)
+            )
         scores_dict = self.bm25_model.get_scores(tokenized_query)
         if not scores_dict:
             if top_k is None:
@@ -953,4 +1003,17 @@ class SparseRetriever(BaseRetriever):
         title = (doc.get("title") or "").strip()
         abstract = (doc.get("abstract") or "").strip()
         venue = str(doc.get("venue") or "").strip()
-        return " ".join([title, title, title, venue, venue, abstract]).strip()
+        authors_raw = doc.get("authors") or ""
+        authors = (
+            " ".join(str(part) for part in authors_raw)
+            if isinstance(authors_raw, list)
+            else str(authors_raw)
+        ).strip()
+
+        # Keep author and venue fields in the sparse index to support
+        # author-centric queries, but gate author matching behind `author_...`
+        # tokens so it effectively only applies for German.
+        author_tokens = self._author_field_tokens(authors) if authors else []
+        return " ".join(
+            [title, title, title, title, title, abstract, *author_tokens, venue, venue]
+        ).strip()
