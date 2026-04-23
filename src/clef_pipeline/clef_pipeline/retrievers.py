@@ -229,7 +229,7 @@ class HarrierRetriever(BaseRetriever):
             batch_size: Embedding batch size for encode calls.
         """
         import torch
-        from sentence_transformers import SentenceTransformer, util
+        from sentence_transformers import util
 
         self.util = util
         self.torch = torch
@@ -240,9 +240,7 @@ class HarrierRetriever(BaseRetriever):
         self.prompt = self.DEFAULT_QUERY_PROMPT
 
         print(f"Loading Dense Retriever ({model_name})...")
-        self.model = SentenceTransformer(
-            model_name, device="cuda", model_kwargs={"dtype": "auto"}
-        )
+        self.model = None
 
     def _cache_key(self) -> str:
         """Build cache namespace identifier for model settings."""
@@ -306,6 +304,10 @@ class HarrierRetriever(BaseRetriever):
             print(f"[cache bypass] Recomputing {label} from source texts.")
 
         print(f"Encoding {len(texts)} {label}...")
+        from sentence_transformers import SentenceTransformer, util
+        self.model = SentenceTransformer(
+            self.model_name, device="cuda", model_kwargs={"dtype": "auto"}
+        )
         embs = self.model.encode(
             texts,
             convert_to_tensor=True,
