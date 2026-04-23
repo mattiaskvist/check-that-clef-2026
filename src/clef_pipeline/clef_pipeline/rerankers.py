@@ -1,5 +1,6 @@
 """Cross-encoder reranker implementations used after candidate retrieval."""
 
+from transformers import AutoModel, AutoModelForSequenceClassification
 from .interfaces import BaseReranker
 
 
@@ -233,7 +234,7 @@ class JinaReranker(BaseReranker):
         """
         self.model_name = model_name
         self.max_length = max_length
-        self.model = None
+        self.model: AutoModel | None = None
 
     def _ensure_loaded(self):
         """Lazily load model weights onto available GPU resources."""
@@ -241,13 +242,13 @@ class JinaReranker(BaseReranker):
             return
 
         import torch
-        from transformers import AutoModelForSequenceClassification
+        from transformers import AutoModel
 
         self.torch = torch
 
         print(f"Loading Cross-Encoder Reranker ({self.model_name}) to GPU...")
 
-        self.model = AutoModelForSequenceClassification.from_pretrained(
+        self.model = AutoModel.from_pretrained(
             self.model_name,
             torch_dtype=torch.bfloat16,
             trust_remote_code=True,
@@ -269,15 +270,15 @@ class JinaReranker(BaseReranker):
         """
         self._ensure_loaded()
 
-        pairs = [[query, corpus[doc_id]] for doc_id in doc_indices]
+        # pairs = [[query, corpus[doc_id]] for doc_id in doc_indices]
 
         with self.torch.inference_mode():
-            scores = self.model.compute_score(pairs, max_length=self.max_length)
+            scores = self.model.rerank(query, [corpus[doc_id][:2048] for doc_id in doc_indices])
 
         if not isinstance(scores, list):
             scores = [scores]
 
         results = list(zip(doc_indices, scores))
-        results.sort(key=lambda x: x[1], reverse=True)
+        results.sort(key=lambda x: x[1].get('relevance_score'), reverse=True)
 
         return results
