@@ -423,7 +423,7 @@ class RandomForestFuser(BaseFuser):
                     sparse_ranks,
                     rrf_scores,
                     rrf_ranked,
-                    include_rrf=True,
+                    include_rrf=False,
                 )
 
                 # Labels
@@ -492,21 +492,16 @@ class RandomForestFuser(BaseFuser):
             )
         )
 
-        # RRF for features
-        rrf_ranked, rrf_scores = RRFFuser._rrf_with_scores(
-            [dense_ranks, sparse_ranks], top_k=len(union_candidates)
-        )
-
-        # Build features
+        # Build features (must match training: include_rrf=False)
         features = FeatureGenerator.build_query_features(
             union_candidates,
             dense_scores,
             dense_ranks,
             sparse_scores,
             sparse_ranks,
-            rrf_scores,
-            rrf_ranked,
-            include_rrf=True,
+            rrf_scores={},
+            rrf_ranked=[],
+            include_rrf=False,
         )
 
         # Predict
