@@ -31,6 +31,7 @@ class PipelineConfig:
     use_fusion: bool = True
     fusion_method: str = "rrf"
     fusion_top_k: int = 30
+    fusion_train_fraction: float = 0.5
     sparse_cache_top_k: int = 2000
     final_top_k: int = 5
     hf_fusion_repo_id: str | None = None

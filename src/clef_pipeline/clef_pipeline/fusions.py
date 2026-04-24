@@ -356,6 +356,7 @@ class RandomForestFuser(BaseFuser):
         dense_model_name: str,
         sparse_config: dict,
         train_split: str = "train",
+        train_cache_suffix: str = "",
     ):
         """Run retrieval on train data, build features, train RF classifiers.
 
@@ -395,10 +396,10 @@ class RandomForestFuser(BaseFuser):
 
                 # Retrieve with scores
                 dense_ranks, dense_scores = dense_retriever.search_with_scores(
-                    i, cache_name=f"queries_train_{lang}"
+                    i, cache_name=f"queries_train{train_cache_suffix}_{lang}"
                 )
                 sparse_ranks, sparse_scores = sparse_retriever.search_with_scores(
-                    i, cache_name=f"sparse_queries_train_{lang}"
+                    i, cache_name=f"sparse_queries_train{train_cache_suffix}_{lang}"
                 )
 
                 # Build candidate union

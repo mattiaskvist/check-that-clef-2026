@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import uuid
 from collections import OrderedDict
 
@@ -481,33 +482,43 @@ class RetrievalPipeline:
             dense_retriever, "model_name", dense_retriever.__class__.__name__
         )
 
+        frac = self.config.fusion_train_fraction
+        frac_suffix = f"_f{frac}" if frac < 1.0 else ""
+        train_split_key = f"train{frac_suffix}"
+
         loaded = False
         if not force_retrain_fusion:
             loaded = self.fuser.load(
                 cache_dir=cache_dir,
                 dense_model_name=dense_model_name,
                 sparse_config=sparse_config,
-                train_split="train",
+                train_split=train_split_key,
             )
 
         if not loaded:
             train_tweets_by_lang: dict[str, list[dict]] = {}
             for lang in languages:
                 train_tweets = list(load_dataset(CHECKTHAT_DATASET, lang)["train"])
+                if frac < 1.0:
+                    rng = random.Random(42)
+                    n = max(1, int(len(train_tweets) * frac))
+                    indices = sorted(rng.sample(range(len(train_tweets)), n))
+                    train_tweets = [train_tweets[i] for i in indices]
+
                 train_tweets_by_lang[lang] = train_tweets
                 train_query_texts = [row["text"] for row in train_tweets]
 
                 dense_retriever.index_queries(
                     train_query_texts,
                     cache_dir=cache_dir,
-                    cache_name=f"queries_train_{lang}",
+                    cache_name=f"queries_train{frac_suffix}_{lang}",
                     force_recompute=force_recompute_dense_queries,
                 )
                 sparse_retriever.index_queries(
                     train_query_texts,
                     lang=lang,
                     cache_dir=cache_dir,
-                    cache_name=f"sparse_queries_train_{lang}",
+                    cache_name=f"sparse_queries_train{frac_suffix}_{lang}",
                     top_k=self.config.sparse_cache_top_k,
                     force_recompute=force_recompute_sparse_cache,
                 )
@@ -521,7 +532,8 @@ class RetrievalPipeline:
                 article_pubkeys=self.article_pubkeys,
                 dense_model_name=dense_model_name,
                 sparse_config=sparse_config,
-                train_split="train",
+                train_split=train_split_key,
+                train_cache_suffix=frac_suffix,
             )
             self.fuser.save(cache_dir=cache_dir)
             if on_cache_update is not None:
