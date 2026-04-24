@@ -11,7 +11,6 @@ from deep_translator.exceptions import (
     TranslationNotFound,
 )
 from nltk.stem import LancasterStemmer
-from rank_bm25 import BM25Plus
 
 from .interfaces import BaseRetriever
 from .utils import STOPWORDS
@@ -230,7 +229,7 @@ class HarrierRetriever(BaseRetriever):
             batch_size: Embedding batch size for encode calls.
         """
         import torch
-        from sentence_transformers import SentenceTransformer, util
+        from sentence_transformers import util
 
         self.util = util
         self.torch = torch
@@ -310,6 +309,10 @@ class HarrierRetriever(BaseRetriever):
             )
 
         print(f"Encoding {len(texts)} {label}...")
+        from sentence_transformers import SentenceTransformer, util
+        self.model = SentenceTransformer(
+            self.model_name, device="cuda", model_kwargs={"dtype": "auto"}
+        )
         embs = self.model.encode(
             texts,
             convert_to_tensor=True,
@@ -441,6 +444,15 @@ class SparseRetriever(BaseRetriever):
         self.use_bigrams = use_bigrams
         self.use_translation = use_translation
         self.stemmer = LancasterStemmer()
+        self.diffusion_steps = 2
+        self.diffusion_decay = 0.65
+        self.diff_neighbors = 6
+        self.prf_docs = 7
+        self.prf_terms = 8
+        self.prf_weight = 0.85
+        self.window_size = 5
+        self._docs_tokens = None
+        self._term_graph = None
         self._indexed_corpus_fingerprint = None
         self._query_rankings_by_name = {}
         self._query_scores_by_name = {}
@@ -532,14 +544,47 @@ class SparseRetriever(BaseRetriever):
             translated_query = query
 
         tokenized_query = self.tokenize(translated_query)
-        scores = np.asarray(
-            self.bm25_model.get_scores(tokenized_query), dtype=np.float32
-        )
-        ranked_indices = np.argsort(scores)[::-1]
-        if top_k is not None:
-            ranked_indices = ranked_indices[:top_k]
-        ranked_scores = scores[ranked_indices]
-        return ranked_indices.astype(np.int32), ranked_scores.astype(np.float32)
+        scores_dict = self.bm25_model.get_scores(tokenized_query)
+        if not scores_dict:
+            if top_k is None:
+                top_k = 0
+            return np.empty((top_k,), dtype=np.int32), np.zeros((top_k,), dtype=np.float32)
+
+        if lang == "en" and self._term_graph is not None:
+            expanded = self._diffusion_expand(tokenized_query, self._term_graph)
+            for term, weight in expanded.items():
+                postings = self.bm25_model.index.get(term)
+                if not postings:
+                    continue
+                for doc_id, _ in postings:
+                    scores_dict[doc_id] += weight
+
+            docs_tokens = self._docs_tokens or []
+            top_docs = self._top_docs(scores_dict, k=self.prf_docs)
+            if top_docs and docs_tokens:
+                from collections import Counter
+
+                counter = Counter()
+                for doc_id in top_docs:
+                    if 0 <= doc_id < len(docs_tokens):
+                        for tok in docs_tokens[doc_id]:
+                            counter[tok] += 1
+
+                total = float(sum(counter.values())) + 1e-9
+                for term, count in counter.most_common(self.prf_terms):
+                    postings = self.bm25_model.index.get(term)
+                    if not postings:
+                        continue
+                    weight = (count / total)
+                    for doc_id, _ in postings:
+                        scores_dict[doc_id] += self.prf_weight * weight
+
+        mx = max(scores_dict.values()) + 1e-9
+        for doc_id in list(scores_dict.keys()):
+            scores_dict[doc_id] /= mx
+
+        ranked_indices, ranked_scores = self._rank_and_pad(scores_dict, top_k=top_k)
+        return ranked_indices, ranked_scores
 
     def _get_cached_query(
         self, query_idx: int, cache_name: str
@@ -578,7 +623,9 @@ class SparseRetriever(BaseRetriever):
             add_bigrams = self.use_bigrams
         text = re.sub(r"[^\w\s]", " ", text.lower())
         tokens = text.split()
-        unigrams = [self.stemmer.stem(t) for t in tokens if t not in STOPWORDS]
+        unigrams = [
+            self.stemmer.stem(t) for t in tokens if t not in STOPWORDS and len(t) > 1
+        ]
         if add_bigrams and len(unigrams) >= 2:
             bigrams = [
                 f"{unigrams[i]}_{unigrams[i + 1]}" for i in range(len(unigrams) - 1)
@@ -592,12 +639,142 @@ class SparseRetriever(BaseRetriever):
         Args:
             collection: Document dictionaries with article metadata.
         """
+        from collections import defaultdict
+
+        class FastBM25:
+            def __init__(self, docs: list[list[str]], k1: float, b: float):
+                self.k1 = float(k1)
+                self.b = float(b)
+                self.N = len(docs)
+                self.doc_len = np.asarray([len(d) for d in docs], dtype=np.float32)
+                self.avgdl = float(self.doc_len.mean()) if self.N else 0.0
+                self.index = defaultdict(list)
+                self.df = defaultdict(int)
+
+                for doc_id, doc in enumerate(docs):
+                    freqs = defaultdict(int)
+                    for tok in doc:
+                        freqs[tok] += 1
+                    for tok, tf in freqs.items():
+                        self.index[tok].append((doc_id, tf))
+                        self.df[tok] += 1
+
+                self.idf = {
+                    tok: float(np.log(1 + (self.N - df + 0.5) / (df + 0.5)))
+                    for tok, df in self.df.items()
+                }
+
+            def get_scores(self, query: list[str]):
+                scores = defaultdict(float)
+                if self.N == 0:
+                    return scores
+
+                for tok in query:
+                    postings = self.index.get(tok)
+                    if not postings:
+                        continue
+                    idf = self.idf.get(tok, 0.0)
+                    for doc_id, tf in postings:
+                        denom = tf + self.k1 * (
+                            1 - self.b + self.b * (self.doc_len[doc_id] / self.avgdl)
+                        )
+                        scores[doc_id] += idf * (tf * (self.k1 + 1) / denom)
+                return scores
+
         corpus = [self.document_to_text(doc) for doc in collection]
         tokenized_corpus = [self.tokenize(text) for text in corpus]
-        self.bm25_model = BM25Plus(tokenized_corpus, k1=self.bm25_k1, b=self.bm25_b)
+        self.bm25_model = FastBM25(tokenized_corpus, k1=self.bm25_k1, b=self.bm25_b)
+        self._docs_tokens = tokenized_corpus
+        self._term_graph = self._build_term_graph(tokenized_corpus)
         self._indexed_corpus_fingerprint = self._texts_fingerprint(corpus)
         self._query_rankings_by_name.clear()
         self._query_scores_by_name.clear()
+
+    def _build_term_graph(self, docs: list[list[str]]):
+        from collections import Counter, defaultdict
+
+        term_graph = defaultdict(Counter)
+        window_size = int(self.window_size)
+
+        for doc in docs:
+            for i, term in enumerate(doc):
+                window = doc[i + 1 : i + 1 + window_size]
+                for neighbor in window:
+                    if term == neighbor:
+                        continue
+                    term_graph[term][neighbor] += 1
+                    term_graph[neighbor][term] += 1
+        return term_graph
+
+    def _diffusion_expand(self, tokens: list[str], term_graph):
+        from collections import Counter
+
+        weights = Counter({t: 1.0 for t in tokens})
+
+        for _ in range(int(self.diffusion_steps)):
+            new_weights = Counter()
+            for term, weight in weights.items():
+                neighbors = term_graph.get(term)
+                if not neighbors:
+                    continue
+                total = float(sum(neighbors.values())) + 1e-9
+                for neighbor, count in neighbors.most_common(int(self.diff_neighbors)):
+                    new_weights[neighbor] += weight * (count / total) * float(
+                        self.diffusion_decay
+                    )
+            weights.update(new_weights)
+
+        return weights
+
+    @staticmethod
+    def _top_docs(scores_dict, k: int) -> list[int]:
+        if k <= 0 or not scores_dict:
+            return []
+        doc_ids = np.fromiter(scores_dict.keys(), dtype=np.int32)
+        vals = np.fromiter(scores_dict.values(), dtype=np.float32)
+        k = min(int(k), len(vals))
+        top_idx = np.argpartition(vals, -k)[-k:]
+        top_idx = top_idx[np.argsort(vals[top_idx])[::-1]]
+        return doc_ids[top_idx].tolist()
+
+    def _rank_and_pad(
+        self, scores_dict, top_k: int | None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        corpus_size = len(getattr(getattr(self, "bm25_model", None), "doc_len", []))
+        if corpus_size <= 0:
+            corpus_size = len(getattr(self, "_docs_tokens", []) or [])
+
+        if top_k is None:
+            top_k = corpus_size
+        top_k = min(int(top_k), int(corpus_size))
+
+        doc_ids = np.fromiter(scores_dict.keys(), dtype=np.int32)
+        vals = np.fromiter(scores_dict.values(), dtype=np.float32)
+        if len(vals) == 0:
+            return np.empty((top_k,), dtype=np.int32), np.zeros((top_k,), dtype=np.float32)
+
+        k = min(top_k, len(vals))
+        top_idx = np.argpartition(vals, -k)[-k:]
+        top_idx = top_idx[np.argsort(vals[top_idx])[::-1]]
+        ranked_ids = doc_ids[top_idx].astype(np.int32)
+        ranked_scores = vals[top_idx].astype(np.float32)
+
+        if len(ranked_ids) < top_k:
+            used = set(int(i) for i in ranked_ids.tolist())
+            needed = top_k - len(ranked_ids)
+            filler = []
+            for doc_id in range(int(corpus_size)):
+                if doc_id not in used:
+                    filler.append(doc_id)
+                    if len(filler) >= needed:
+                        break
+            if filler:
+                ranked_ids = np.concatenate([ranked_ids, np.asarray(filler, dtype=np.int32)])
+                ranked_scores = np.concatenate(
+                    [ranked_scores, np.zeros((len(filler),), dtype=np.float32)]
+                )
+
+        return ranked_ids, ranked_scores
 
     def index_queries(
         self,
@@ -782,12 +959,5 @@ class SparseRetriever(BaseRetriever):
         """
         title = (doc.get("title") or "").strip()
         abstract = (doc.get("abstract") or "").strip()
-        authors_raw = doc.get("authors") or ""
-        authors = (
-            " ".join(str(part) for part in authors_raw)
-            if isinstance(authors_raw, list)
-            else str(authors_raw)
-        ).strip()
         venue = str(doc.get("venue") or "").strip()
-        # Repeat title to boost its importance
-        return f"{title} {title} {title} {title} {title} {title} {title} {title} {abstract} {authors} {venue}".strip()
+        return " ".join([title, title, title, venue, venue, abstract]).strip()
