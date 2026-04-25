@@ -66,15 +66,79 @@ def _texts_fingerprint(texts: list[str]) -> str:
     return digest.hexdigest()[:16]
 
 
+def _find_latest_model(directory: str) -> str | None:
+    """Find the most recently modified .pkl file in directory (recursive)."""
+    import glob
+
+    pkl_files = glob.glob(os.path.join(directory, "**", "*.pkl"), recursive=True)
+    if not pkl_files:
+        return None
+    return max(pkl_files, key=os.path.getmtime)
+
+
+def _upload_to_hf(path: str, hf_token: str | None):
+    """Upload a model file to Hugging Face."""
+    from huggingface_hub import HfApi
+
+    api = HfApi(token=hf_token)
+    api.create_repo(repo_id=HF_REPO_ID, exist_ok=True, repo_type="model")
+    filename = os.path.basename(path)
+    print(f"Uploading to Hugging Face: {HF_REPO_ID}/{filename}")
+    api.upload_file(
+        path_or_fileobj=path,
+        path_in_repo=filename,
+        repo_id=HF_REPO_ID,
+        repo_type="model",
+    )
+    print("HuggingFace upload complete.")
+
+
+def _upload_to_modal(path: str):
+    """Upload a model file to Modal volume."""
+    import modal
+
+    print(f"Uploading to Modal volume '{MODAL_VOLUME_NAME}'...")
+    volume = modal.Volume.from_name(MODAL_VOLUME_NAME)
+    remote_path = f"/rf_fusion_models/{os.path.basename(path)}"
+    with volume.batch_upload() as batch:
+        batch.put_file(path, remote_path)
+    size_mb = os.path.getsize(path) / (1024 * 1024)
+    print(f"  Uploaded to {remote_path} ({size_mb:.1f} MB)")
+
+
 def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Train RF fuser locally.")
     parser.add_argument("--skip-hf", action="store_true", help="Skip HuggingFace upload.")
     parser.add_argument("--skip-modal", action="store_true", help="Skip Modal volume upload.")
+    parser.add_argument(
+        "--upload-only", action="store_true",
+        help="Skip training — find existing model in cache and upload it.",
+    )
     args = parser.parse_args()
 
     overall_start = time.time()
+
+    # -----------------------------------------------------------------------
+    # Fast path: upload existing model without training
+    # -----------------------------------------------------------------------
+    if args.upload_only:
+        saved_path = _find_latest_model(RF_OUTPUT_DIR)
+        if saved_path is None:
+            print(f"ERROR: No .pkl model found in {RF_OUTPUT_DIR}")
+            return
+        print(f"Found existing model: {saved_path}")
+        hf_token = os.environ.get("HUGGING_FACE")
+        if not args.skip_hf:
+            _upload_to_hf(saved_path, hf_token)
+        if not args.skip_modal:
+            _upload_to_modal(saved_path)
+        total = time.time() - overall_start
+        print(f"\n{'=' * 60}")
+        print(f"  Upload complete — {total:.0f}s total")
+        print(f"{'=' * 60}")
+        return
 
     # -----------------------------------------------------------------------
     # 1. Load collection
@@ -108,7 +172,7 @@ def main():
         )
     dense_retriever.embeddings = torch.load(
         doc_emb_path, map_location="cuda", weights_only=True
-    )
+    ).float()
     print(f"  Loaded doc embeddings: {dense_retriever.embeddings.shape}")
 
     # -----------------------------------------------------------------------
@@ -148,7 +212,7 @@ def main():
                 f"Dense train queries not found: {dense_q_path}\n"
                 f"Run: uv run modal run scripts/modal_dense_train_cache.py"
             )
-        embs = torch.load(dense_q_path, map_location="cuda", weights_only=True)
+        embs = torch.load(dense_q_path, map_location="cuda", weights_only=True).float()
         dense_retriever._query_embeddings_by_name[f"queries_train_{lang}"] = embs
         print(f"    Dense: loaded {embs.shape[0]} query embeddings")
 
@@ -195,16 +259,7 @@ def main():
     # 7. Upload to Modal volume
     # -----------------------------------------------------------------------
     if not args.skip_modal:
-        import modal
-
-        print(f"\nUploading to Modal volume '{MODAL_VOLUME_NAME}'...")
-        volume = modal.Volume.from_name(MODAL_VOLUME_NAME)
-        remote_path = f"/rf_fusion_models/{os.path.basename(saved_path)}"
-        with open(saved_path, "rb") as f:
-            volume.write_file(remote_path, f)
-        volume.commit()
-        size_mb = os.path.getsize(saved_path) / (1024 * 1024)
-        print(f"  Uploaded to {remote_path} ({size_mb:.1f} MB)")
+        _upload_to_modal(saved_path)
 
     total = time.time() - overall_start
     print(f"\n{'=' * 60}")

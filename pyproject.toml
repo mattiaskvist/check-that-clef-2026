@@ -47,3 +47,9 @@ members = [
 clef-pipeline = { workspace = true }
 clef-demo = { workspace = true }
 clef-training = { workspace = true }
+torch = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
