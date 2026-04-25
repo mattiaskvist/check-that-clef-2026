@@ -215,3 +215,9 @@ en*.json
 hard_negative_triplets.json
 best_model/
 .worktrees/
+*.pt
+*.pkl
+*.npz
+test_autoprocessor.py
+test_modal.py
+test_versions.py
