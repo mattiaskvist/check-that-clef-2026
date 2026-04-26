@@ -91,7 +91,7 @@ class PipelineBackend:
         # only grab the first 5 documents to send back as a preview
         # The full dataset stays safely in the GPU's memory,
         # while keeping the response lightweight and fast for the UI
-        preview_docs = self.pipeline.collection_documents[:5]
+        preview_docs = self.pipeline.collection_documents[:15]
 
         indexed_docs_summary = [
             {
@@ -160,7 +160,7 @@ class PipelineBackend:
                 runtime_pipeline.fuser._trained = True
             else:
                 # If we have to load from disk in the search call
-                import joblib
+                import joblib, os
                 fixed_path = "..." 
                 if os.path.exists(fixed_path):
                     payload = joblib.load(fixed_path)
