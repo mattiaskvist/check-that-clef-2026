@@ -54,7 +54,9 @@ def asynchronous_task_monitor():
         st.info(
             f"""
             **Preparing retrieval system**
+
             Loading cached embeddings onto the GPU for semantic search.
+
             ⏱ Elapsed time: **{elapsed_time}s**
             """
         )
@@ -148,6 +150,34 @@ def render_stage_outputs(stages, top_ids):
     render_stage(c3, "Fusion", rrf)
     render_stage(c4, "Reranker", final)
 
+def render_doc_preview(doc, idx):
+    title = doc.get("title", "Untitled")
+    authors = truncate(doc.get("authors", ""), 100)
+    abstract = truncate(doc.get("abstract", ""), 180)
+    pubkey = doc.get("pubkey", doc.get("doc_id", "unknown"))
+
+    st.markdown(
+        f"""
+        <div class="doc-preview-card">
+
+        <div class="doc-preview-title">
+        {idx}. {title}
+        <span class="doc-id">id {pubkey}</span>
+        </div>
+
+        <div class="doc-preview-authors">
+        {authors}
+        </div>
+
+        <div class="doc-preview-abstract">
+        {abstract}
+        </div>
+
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
 def main():
     st.set_page_config(page_title="CLEF Source Retrieval Demo", layout="wide")
     st.markdown(
@@ -227,6 +257,42 @@ def main():
             color: #94a3b8;
         }
 
+        .doc-preview-card {
+            border-radius: 8px;
+            padding: 8px 12px;
+            margin-bottom: 6px;
+            background: #020617;
+            border: 1px solid #1e293b;
+        }
+
+        .doc-preview-title {
+            font-weight: 600;
+            font-size: 13px;
+            margin-bottom: 2px;
+        }
+
+        .doc-preview-authors {
+            font-size: 11px;
+            color: #94a3b8;
+            margin-bottom: 2px;
+        }
+
+        .doc-preview-abstract {
+            font-size: 12px;
+            line-height: 1.25;
+            color: #cbd5f5;
+        }
+
+        .doc-id {
+            float: right;
+            font-family: monospace;
+            font-size: 10px;
+            background: #0f172a;
+            padding: 1px 5px;
+            border-radius: 4px;
+            color: #94a3b8;
+        }
+
         </style>
         """,
         unsafe_allow_html=True,
@@ -241,15 +307,18 @@ def main():
     with st.sidebar:
         st.header("Pipeline Settings")
 
-        dense_model = st.radio(
+        dense_model = st.selectbox(
             "Dense model",
-            options=["harrier-270m", "bge-m3"],
-            index=0,
+            options=["none", "harrier-270m", "bge-m3"],
+            index=1,
         )
 
         use_sparse = st.checkbox("Enable sparse retriever", value=True)
 
-        retrievers = [dense_model]
+        retrievers = []
+
+        if dense_model != "none":
+            retrievers.append(dense_model)
         if use_sparse:
             retrievers.append("sparse")
 
@@ -261,12 +330,6 @@ def main():
 
         enable_fusion = fusion_method != "none"
 
-        reranker_name = st.selectbox(
-            "Reranker",
-            options=["none", "nemotron", "qwen3-reranker-8b"],
-            index=1,
-        )
-
         fusion_top_k = st.slider(
             "Fusion candidate top-k",
             min_value=5,
@@ -275,6 +338,13 @@ def main():
             step=5,
             disabled=not enable_fusion,
         )
+
+        reranker_name = st.selectbox(
+            "Reranker",
+            options=["none", "nemotron", "qwen3-reranker-8b"],
+            index=1,
+        )
+
 
     if not retrievers:
         st.warning("Select at least one retriever.")
@@ -306,7 +376,6 @@ def main():
     if st.session_state.get("is_polling", False):
         asynchronous_task_monitor()
 
-    # --- UI RENDERED AFTER LOADING ---
     # We ensure this doesn't accidentally trigger while polling is still active
     if st.session_state.get("is_indexed", False) and not st.session_state.get(
         "is_polling", False
@@ -316,7 +385,9 @@ def main():
         st.success(
             f"""
             **Retrieval system ready**
+
             Indexed {actual_count:,} documents with precomputed embeddings.
+
             You can now search for matching articles.
             """
         )
@@ -326,8 +397,11 @@ def main():
         if not st.session_state.get("docs_summary"):
             st.warning("The preview list is empty. Check backend data.")
         else:
-            df = pd.DataFrame(st.session_state["docs_summary"])
-            st.dataframe(df, width="stretch", height=320)
+            with st.container(height=300):
+                docs = st.session_state["docs_summary"]
+
+                for i, doc in enumerate(docs):
+                    render_doc_preview(doc, i + 1)
 
         col1, col2 = st.columns([1,2])
         results = st.session_state.get("results")
