@@ -28,7 +28,7 @@ embedding_cache = modal.Volume.from_name(
 
 @app.cls(
     image=image,
-    gpu="A10G", # swap to L40S for real demo for qwen
+    gpu="A10G", # swap to A100-80GBS for real demo for qwen
     timeout=int(
         60 * 60 * 0.5
     ),  # 15 mins max runtime to avoid unexpected long-running costs
