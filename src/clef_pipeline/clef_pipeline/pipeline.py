@@ -165,10 +165,31 @@ class RetrievalPipeline:
 
     def _dense_doc_text_limit(self) -> int:
         """Resolve the max character budget for dense document indexing."""
-        reranker_limit = getattr(self.reranker, "max_length", None)
-        if isinstance(reranker_limit, int) and reranker_limit > 0:
-            return reranker_limit
         return self.DEFAULT_DENSE_DOC_MAX_CHARS
+
+    @classmethod
+    def clone_runtime(
+        cls,
+        base: "RetrievalPipeline",
+        config: PipelineConfig,
+        reranker: object | None,
+    ) -> "RetrievalPipeline":
+        """Create a runtime-tuned pipeline without re-indexing retrievers.
+
+        This is used to swap inference-only settings (fusion method, reranker)
+        while reusing the already-loaded document collection and retriever state.
+        """
+        pipeline = cls(config=config, retrievers=dict(base.retrievers), reranker=reranker)
+        pipeline.collection_documents = base.collection_documents
+        pipeline.article_pubkeys = base.article_pubkeys
+        if pipeline.reranker is not None:
+            pipeline.reranker_corpus = pipeline.reranker.preprocess_corpus(
+                pipeline.collection_documents
+            )
+        else:
+            pipeline.reranker_corpus = base.reranker_corpus
+        pipeline._cache_names = dict(base._cache_names)
+        return pipeline
 
     def index_collection(
         self,

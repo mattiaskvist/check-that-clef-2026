@@ -303,16 +303,14 @@ class HarrierRetriever(BaseRetriever):
         if force_recompute and cache_path and os.path.exists(cache_path):
             print(f"[cache bypass] Recomputing {label} from source texts.")
 
+        from sentence_transformers import SentenceTransformer
+
         if self.model is None:
             self.model = SentenceTransformer(
                 self.model_name, device="cuda", model_kwargs={"dtype": "auto"}
             )
 
         print(f"Encoding {len(texts)} {label}...")
-        from sentence_transformers import SentenceTransformer, util
-        self.model = SentenceTransformer(
-            self.model_name, device="cuda", model_kwargs={"dtype": "auto"}
-        )
         embs = self.model.encode(
             texts,
             convert_to_tensor=True,
