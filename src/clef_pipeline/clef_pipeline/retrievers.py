@@ -395,7 +395,7 @@ class HarrierRetriever(BaseRetriever):
 
         scores = self.util.cos_sim(query_embeddings[query_idx], self.embeddings)[0]
         ranked = self.torch.argsort(scores, descending=True).tolist()
-        return ranked, scores.cpu().numpy().tolist()
+        return ranked, scores.cpu().float().numpy().tolist()
 
     def search(self, query_idx: int, cache_name: str | None = None) -> list[int]:
         """Return dense ranking for one indexed query.
