@@ -102,11 +102,11 @@ def render_result_card(row, rank):
         unsafe_allow_html=True,
     )
 
-def render_stage_outputs(stages, top_ids):
+def render_stage_outputs(stages, top_ids, enable_fusion=True):
 
     dense = stages.get("dense", [])[:100]
     sparse = stages.get("sparse", [])[:100]
-    rrf = stages.get("rrf", [])
+    rrf = stages.get("rrf", []) if enable_fusion else []
     final = stages.get("final", [])
 
     st.write("### Retrieval stages")
@@ -151,9 +151,10 @@ def render_stage_outputs(stages, top_ids):
     render_stage(c4, "Reranker", final)
 
 def render_doc_preview(doc, idx):
-    title = doc.get("title", "Untitled")
-    authors = truncate(doc.get("authors", ""), 100)
-    abstract = truncate(doc.get("abstract", ""), 180)
+    import html
+    title = html.escape(doc.get("title", "Untitled"))
+    authors = html.escape(truncate(doc.get("authors", ""), 100))
+    abstract = html.escape(truncate(doc.get("abstract", ""), 180))
     pubkey = doc.get("pubkey", doc.get("doc_id", "unknown"))
 
     st.markdown(
@@ -411,7 +412,7 @@ def main():
             st.subheader("Query")
 
             query_text = st.text_area(
-                "Enter a tweet or claim to search for relevant scientific articles.",
+                "Enter a tweet or claim to search for relevant articles.",
                 height=160,
                 placeholder="Example: 'RNNs are great for volatility forecasting!'",
             )
@@ -458,7 +459,11 @@ def main():
             top_ids = st.session_state["top_ids"]
 
             st.markdown("---")
-            render_stage_outputs(results["stages"], top_ids)
+            render_stage_outputs(
+                results["stages"],
+                top_ids,
+                enable_fusion=enable_fusion
+            )
 
 
 if __name__ == "__main__":
