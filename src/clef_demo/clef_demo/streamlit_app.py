@@ -52,7 +52,11 @@ def asynchronous_task_monitor():
         # Task is still running on the GPU. Yield the thread.
         elapsed_time = int(time.time() - start_time)
         st.info(
-            f"⏳ Loading cached embeddings on GPU cluster... Please wait ({elapsed_time}s elapsed)"
+            f"""
+            **Preparing retrieval system**
+            Loading cached embeddings onto the GPU for semantic search.
+            ⏱ Elapsed time: **{elapsed_time}s**
+            """
         )
 
 def truncate(text, limit=100):
@@ -309,12 +313,13 @@ def main():
     ):
         actual_count = st.session_state.get("doc_count", 0)
 
-        st.success(f"Loaded {actual_count} documents and cached embeddings.")
-
-        # if actual_count > 50:
-        #     st.warning(
-        #         f"Data payload truncated from {actual_count} to 50 rows to prevent WebSocket saturation."
-        #     )
+        st.success(
+            f"""
+            **Retrieval system ready**
+            Indexed {actual_count:,} documents with precomputed embeddings.
+            You can now search for matching articles.
+            """
+        )
 
         st.subheader("Documents preview")
 
@@ -331,7 +336,11 @@ def main():
         with col1:
             st.subheader("Query")
 
-            query_text = st.text_area("Write your tweet", height=160)
+            query_text = st.text_area(
+                "Enter a tweet or claim to search for relevant scientific articles.",
+                height=160,
+                placeholder="Example: 'RNNs are great for volatility forecasting!'",
+            )
 
             search_clicked = st.button("Find top-5 matches", use_container_width=True)
 
@@ -343,7 +352,7 @@ def main():
                     st.error("Enter a tweet first.")
                     st.stop()
 
-                with st.spinner("Routing search to GPU..."):
+                with st.spinner("Searching articles and ranking results..."):
                     try:
                         results = PipelineBackend().search.remote(
                             query_text,
@@ -356,7 +365,9 @@ def main():
                         rows = results["rows"]
 
                         if not rows:
-                            st.warning("No matches returned.")
+                            st.warning(
+                                "No relevant articles were found. Try rephrasing the tweet or claim."
+                            )
                         else:
                             for i, row in enumerate(rows, start=1):
                                 render_result_card(row, i)
