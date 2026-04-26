@@ -12,6 +12,27 @@ STOPWORDS = frozenset(
 )
 
 
+def load_query_split(lang: str, split: str) -> list[dict]:
+    """Load one language split from the official CheckThat dataset.
+
+    The competition dataset exposes ``train`` and ``dev`` through the language
+    configuration, while ``test`` is exposed via a top-level ``test`` config
+    containing one split per language.
+
+    Args:
+        lang: Language code such as ``en``, ``de``, or ``fr``.
+        split: Requested split name.
+
+    Returns:
+        Query rows as plain dictionaries.
+    """
+    from datasets import load_dataset
+
+    if split == "test":
+        return list(load_dataset(CHECKTHAT_DATASET, name="test")[lang])
+    return list(load_dataset(CHECKTHAT_DATASET, lang)[split])
+
+
 def article_to_text(doc: dict) -> str:
     """Convert a document dict into minimal title/abstract text."""
     return f"{doc['title']}\n{doc['abstract']}"

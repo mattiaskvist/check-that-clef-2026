@@ -206,6 +206,9 @@ uv run modal run -m clef_pipeline.main \
   --submission-download-dir submissions
 ```
 
+The official `test` split is unlabeled and has no `pubkey` column, so this run
+can produce submission TSVs but cannot compute local evaluation metrics.
+
 2. Move into the downloaded run directory (`submissions/test-<timestamp>`) and validate expected files:
 
 ```bash
