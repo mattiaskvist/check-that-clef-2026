@@ -78,8 +78,8 @@ def _print_language_summary(
 
 @app.function(
     image=image,
-    gpu="L4",
-    timeout=60 * 60 * 3,
+    gpu="H100",
+    timeout=60 * 60 * 10,
     secrets=[modal.Secret.from_name("hf-token")],
     volumes={CACHE_MOUNT: embedding_cache},
 )

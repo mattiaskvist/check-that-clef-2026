@@ -221,3 +221,12 @@ best_model/
 test_autoprocessor.py
 test_modal.py
 test_versions.py
+*.tsv
+metrics_10_hybrid_rf_gemma.json
+metrics_12_hybrid_rf_jina.json
+metrics_13_hybrid_rrf_jina.json
+modal_cache_backup/hf_hub/CACHEDIR.TAG
+modal_cache_backup/hf_hub/models--boyes-boys-clef-2026--random-forest-fuser/blobs/9eaf4851f65bee5b0f3a9871c86c9de705f3e73d631047c31738a0efea514176
+modal_cache_backup/hf_hub/models--boyes-boys-clef-2026--random-forest-fuser/refs/main
+modalcommands.txt
+rf_importance.png
