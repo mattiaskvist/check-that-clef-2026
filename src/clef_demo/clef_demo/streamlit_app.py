@@ -236,24 +236,40 @@ def main():
 
     with st.sidebar:
         st.header("Pipeline Settings")
-        retrievers = st.multiselect(
-            "Retrievers",
-            options=["harrier-270m", "sparse", "bge-m3"],
-            default=["harrier-270m", "sparse"],
-        )
-        fusion_method = st.selectbox(
-            "Fusion method",
-            options=["rrf", "random_forest"],
+
+        dense_model = st.radio(
+            "Dense model",
+            options=["harrier-270m", "bge-m3"],
             index=0,
         )
-        enable_fusion = st.checkbox("Enable fusion", value=True)
+
+        use_sparse = st.checkbox("Enable sparse retriever", value=True)
+
+        retrievers = [dense_model]
+        if use_sparse:
+            retrievers.append("sparse")
+
+        fusion_method = st.selectbox(
+            "Fusion method",
+            options=["none", "rrf", "random_forest"],
+            index=1,
+        )
+
+        enable_fusion = fusion_method != "none"
+
         reranker_name = st.selectbox(
             "Reranker",
             options=["none", "nemotron", "qwen3-reranker-8b"],
             index=1,
         )
+
         fusion_top_k = st.slider(
-            "Fusion candidate top-k", min_value=5, max_value=100, value=30, step=5
+            "Fusion candidate top-k",
+            min_value=5,
+            max_value=100,
+            value=30,
+            step=5,
+            disabled=not enable_fusion,
         )
 
     if not retrievers:
