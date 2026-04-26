@@ -164,7 +164,6 @@ class PipelineBackend:
                 fixed_path = "..." 
                 if os.path.exists(fixed_path):
                     payload = joblib.load(fixed_path)
-                    # --- THE FIX: Extract here too ---
                     runtime_pipeline.fuser.model = payload["model"] if isinstance(payload, dict) else payload
                     runtime_pipeline.fuser._trained = True
 
