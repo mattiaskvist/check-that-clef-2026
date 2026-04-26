@@ -52,6 +52,8 @@ class PipelineBackend:
             retrievers=[RetrieverConfig(name=name) for name in selected_retrievers],
             reranker=RerankerConfig(name=None, enabled=False),
             use_fusion=True,
+            fusion_method="random_forest",
+            hf_fusion_repo_id="boyes-boys-clef-2026/random-forest-fuser",
             fusion_top_k=30,
             sparse_cache_top_k=2000,
             final_top_k=5,
@@ -62,6 +64,29 @@ class PipelineBackend:
         ).to_list()
         self.pipeline = build_pipeline_from_config(config)
         self.pipeline.index_collection(base_docs, cache_dir="/cache/embeddings")
+
+        import os
+        import joblib
+        
+        fixed_path = "/cache/embeddings/hf_hub/models--boyes-boys-clef-2026--random-forest-fuser/snapshots/db30a2f44670a5bc6d81ff7f8c0e1b8719de20d9/rf_1d2c99cd554bfc4b.pkl"
+
+        if os.path.exists(fixed_path):
+            print(f"Force-loading existing model: {fixed_path}")
+            payload = joblib.load(fixed_path)
+            
+            if isinstance(payload, dict) and "model" in payload:
+                self.pipeline.fuser.model = payload["model"]
+            else:
+                self.pipeline.fuser.model = payload # Fallback if it was just the model
+                
+            self.pipeline.fuser._trained = True
+        else:
+            print("Fixed path not found, running standard prepare...")
+            self.pipeline.prepare_fusion_model(
+                cache_dir="/cache/embeddings",
+                languages=["en", "fr", "de"],
+                force_retrain_fusion=False
+            )
 
         # only grab the first 5 documents to send back as a preview
         # The full dataset stays safely in the GPU's memory,
@@ -85,7 +110,7 @@ class PipelineBackend:
         self,
         query_text: str,
         enable_fusion: bool = True,
-        fusion_method: str = "rrf",
+        fusion_method: str = "random_forest",
         fusion_top_k: int = 30,
         reranker_name: str = "none",
     ):
@@ -123,6 +148,21 @@ class PipelineBackend:
             config=runtime_config,
             reranker=runtime_reranker,
         )
+
+        if runtime_config.fusion_method == "random_forest":
+            from clef_pipeline.fusions import RandomForestFuser
+            if isinstance(self.pipeline.fuser, RandomForestFuser) and self.pipeline.fuser.model:
+                runtime_pipeline.fuser.model = self.pipeline.fuser.model
+                runtime_pipeline.fuser._trained = True
+            else:
+                # If we have to load from disk in the search call
+                import joblib
+                fixed_path = "..." 
+                if os.path.exists(fixed_path):
+                    payload = joblib.load(fixed_path)
+                    # --- THE FIX: Extract here too ---
+                    runtime_pipeline.fuser.model = payload["model"] if isinstance(payload, dict) else payload
+                    runtime_pipeline.fuser._trained = True
 
         result = runtime_pipeline.search_text(query_text, lang="auto")
         preds = result["preds"]
