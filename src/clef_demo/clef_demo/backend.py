@@ -131,6 +131,10 @@ class PipelineBackend:
             runtime_reranker = create_reranker(reranker_name)
             runtime_reranker_config = RerankerConfig(name=reranker_name, enabled=True)
 
+        if fusion_method == "none":
+            enable_fusion = False
+            fusion_method = "rrf"  # dummy fallback
+
         runtime_config = PipelineConfig(
             retrievers=self.pipeline.config.retrievers,
             reranker=runtime_reranker_config,
