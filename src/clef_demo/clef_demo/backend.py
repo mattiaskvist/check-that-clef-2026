@@ -53,7 +53,7 @@ class PipelineBackend:
             retrievers=[RetrieverConfig(name=name) for name in selected_retrievers],
             reranker=RerankerConfig(name=None, enabled=False),
             use_fusion=True,
-            fusion_method="random_forest",
+            fusion_method="rrf",
             hf_fusion_repo_id="boyes-boys-clef-2026/random-forest-fuser",
             fusion_top_k=30,
             sparse_cache_top_k=2000,
