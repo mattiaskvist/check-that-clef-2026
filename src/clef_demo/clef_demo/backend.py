@@ -36,7 +36,7 @@ embedding_cache = modal.Volume.from_name(
     ),  # 15 mins max runtime to avoid unexpected long-running costs
     volumes={"/cache/embeddings": embedding_cache},
     secrets=[modal.Secret.from_name("hf-token")],
-    scaledown_window=150,  # Keeps GPU alive for 2.5 mins
+    scaledown_window=60 * 10,  # Keeps GPU alive for 10 mins
 )
 class PipelineBackend:
     """Stateful Modal class that owns one in-memory retrieval pipeline.
@@ -48,7 +48,11 @@ class PipelineBackend:
     """
 
     @modal.method()
-    def load_cached_collection(self, selected_retrievers: list[str]):
+    def load_cached_collection(
+        self,
+        selected_retrievers: list[str],
+        custom_papers: str | None = None,
+    ):
         """Load collection metadata and cached retriever artifacts for the demo.
 
         Args:
@@ -66,6 +70,10 @@ class PipelineBackend:
         from clef_pipeline.utils import CHECKTHAT_DATASET
         from datasets import load_dataset
 
+        fusion_method = (
+            "random_forest" if "harrier-270m" in selected_retrievers else "rrf"
+        )
+
         config = PipelineConfig(
             retrievers=[RetrieverConfig(name=name) for name in selected_retrievers],
             reranker=RerankerConfig(name=None, enabled=False),
@@ -76,6 +84,8 @@ class PipelineBackend:
             sparse_cache_top_k=2000,
             final_top_k=5,
         )
+
+        import os
 
         base_docs = load_dataset(
             CHECKTHAT_DATASET, "collection", split="collection"
