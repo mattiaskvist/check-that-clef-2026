@@ -414,7 +414,7 @@ def main():
 
             query_text = st.text_area(
                 "Enter a tweet or claim to search for relevant articles.",
-                height=160,
+                height=320,
                 placeholder="Example: 'RNNs are great for volatility forecasting!'",
             )
 
