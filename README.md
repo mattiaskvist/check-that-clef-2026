@@ -31,6 +31,33 @@ The pipeline reads the public Hugging Face dataset
 `sschellhammer/CT26_Task1_SourceRetrievalForScientificWebClaims` and caches
 expensive artifacts in Modal volumes.
 
+![Retrieval architecture](docs/assets/retrieval-architecture.svg)
+
+## Results
+
+The table below shows the progression across the ablation configurations on the
+dev set, measured with MRR@5.
+
+To reproduce these runs, use the ablation commands in the
+[pipeline guide](src/clef_pipeline/README.md#ablation-commands).
+
+| # | Model Configuration | English | German | French | Avg. |
+|---:|---|---:|---:|---:|---:|
+| 0 | CheckThat! Baseline | 0.4987 | 0.3767 | 0.4584 | 0.4446 |
+| 1 | Vanilla BM25 Sparse Retriever | 0.4991 | 0.1973 | 0.2634 | 0.3199 |
+| 2 | Optimized Sparse Retriever | 0.5514 | 0.5052 | 0.5511 | 0.5008 |
+| 3 | BGE-M3 Dense Retriever Only | 0.5728 | 0.5044 | 0.5892 | 0.5555 |
+| 4 | Harrier 27B Dense Retriever Only | 0.6943 | 0.5892 | 0.7051 | 0.6628 |
+| 5 | Hybrid (Optimized Sparse + Harrier) + RRF Fusion | 0.6325 | 0.5103 | 0.6440 | 0.5956 |
+| 6 | Hybrid (Optimized Sparse + Harrier) + Random Forest Fusion | 0.7000 | 0.5937 | 0.7127 | 0.6688 |
+| 7 | Hybrid + Random Forest Fusion + Nemotron Reranker | 0.7391 | 0.6244 | 0.7343 | 0.6993 |
+| 8 | Hybrid + RRF Fusion + Nemotron Reranker | 0.7311 | 0.6166 | 0.7273 | 0.6917 |
+| 9 | Harrier 27B Dense Only + Nemotron Reranker | 0.7388 | 0.6190 | 0.7347 | 0.6975 |
+| **10** | **Hybrid + Random Forest Fusion + Qwen3 8B Reranker** | **0.7584** | **0.6943** | **0.7850** | **0.7459** |
+| 11 | Hybrid + RRF Fusion + Qwen3 8B Reranker | 0.7474 | 0.6896 | 0.7794 | 0.7388 |
+| 12 | Hybrid + Random Forest Fusion + Jina Reranker | 0.6952 | 0.6203 | 0.7026 | 0.6727 |
+| 13 | Hybrid + RRF Fusion + Jina Reranker | 0.6881 | 0.6089 | 0.6989 | 0.6653 |
+
 ## Setup
 
 Install `uv`, sync the workspace, and authenticate required services:
