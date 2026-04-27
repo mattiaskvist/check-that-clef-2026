@@ -221,6 +221,7 @@ best_model/
 test_autoprocessor.py
 test_modal.py
 test_versions.py
+modal_cache_backup/
 *.tsv
 metrics_10_hybrid_rf_gemma.json
 metrics_12_hybrid_rf_jina.json

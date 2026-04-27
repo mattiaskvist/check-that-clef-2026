@@ -356,7 +356,7 @@ def main():
 
         reranker_name = st.selectbox(
             "Reranker",
-            options=["none", "nemotron", "qwen3-reranker-8b"],
+            options=["none", "nemotron"],
             index=1,
         )
 
@@ -376,6 +376,7 @@ def main():
             # Non-blocking remote procedure call
             call = PipelineBackend().load_cached_collection.spawn(
                 selected_retrievers=retrievers,
+                custom_papers="uploads/johan_boye_papers.csv"
             )
 
             # Preserve state and initiate the polling fragment
@@ -426,7 +427,7 @@ def main():
 
             query_text = st.text_area(
                 "Enter a tweet or claim to search for relevant articles.",
-                height=160,
+                height=360,
                 placeholder="Example: 'RNNs are great for volatility forecasting!'",
             )
 
