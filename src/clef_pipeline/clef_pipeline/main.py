@@ -13,7 +13,7 @@ from .submission import (
     submission_volume_remote_dir,
     write_submission_tsv_files,
 )
-from .utils import CHECKTHAT_DATASET, load_query_split
+from .utils import CHECKTHAT_DATASET, load_query_split, read_custom_papers
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
@@ -137,6 +137,7 @@ def evaluate_pipeline(
     reranker_model: str = "nemotron",
     disable_reranker: bool = False,
     sparse_vanilla: bool = False,
+    custom_papers: str | None = None,
 ):
     """Run the full retrieval evaluation workflow on Modal.
 
@@ -189,6 +190,12 @@ def evaluate_pipeline(
         CHECKTHAT_DATASET, "collection", split="collection"
     )
     collection_documents = collection_dataset.to_list()
+    if custom_papers:
+        custom_path = os.path.join(CACHE_MOUNT, custom_papers)
+        logger.info(f"Appending custom papers from: {custom_path}")
+        custom_docs = read_custom_papers(custom_path, 11000)
+        collection_documents.extend(custom_docs)
+        logger.info(f"Total documents after append: {len(collection_documents)}")
     pipeline.index_collection(
         collection_documents=collection_documents,
         cache_dir=CACHE_MOUNT,
@@ -368,6 +375,7 @@ def main(
     disable_reranker: bool = False,
     sparse_vanilla: bool = False,
     metrics_output_file: str | None = None,
+    custom_papers: str | None = None,
 ):
     """Local CLI entrypoint that dispatches Modal evaluation and export.
 
@@ -400,6 +408,7 @@ def main(
         reranker_model=reranker_model,
         disable_reranker=disable_reranker,
         sparse_vanilla=sparse_vanilla,
+        custom_papers=custom_papers,
     )
 
     if metrics_output_file:
