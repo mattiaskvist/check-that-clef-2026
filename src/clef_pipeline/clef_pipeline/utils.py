@@ -2,6 +2,8 @@
 
 import nltk
 from nltk.corpus import stopwords
+import csv
+from pathlib import Path
 
 nltk.download("stopwords", quiet=True)
 
@@ -72,3 +74,30 @@ class FusionProcessor:
 
         sorted_docs = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
         return [doc_id for doc_id, score in sorted_docs[:top_k]]
+
+
+def read_custom_papers(file_path: str, start_id: int = 11000) -> list[dict]:
+    """Read custom papers from a CSV file."""
+    path = Path(file_path)
+
+    if not path.exists():
+        raise FileNotFoundError(f"custom_papers file not found: {path}")
+
+    if path.suffix.lower() != ".csv":
+        raise ValueError("custom_papers must be a .csv file for now")
+
+    documents = []
+    with path.open("r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+
+        for i, row in enumerate(reader):
+            pubkey = start_id + i
+            documents.append({
+                "pubkey": pubkey,
+                "title": row.get("Title", "").strip(),
+                "authors": row.get("Authors", "").strip(),
+                "venue": row.get("Venue", "").strip(),
+                "abstract": row.get("Abstract", "").strip(),
+            })
+
+    return documents
