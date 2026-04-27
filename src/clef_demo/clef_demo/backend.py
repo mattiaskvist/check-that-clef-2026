@@ -31,13 +31,13 @@ embedding_cache = modal.Volume.from_name(
 
 @app.cls(
     image=image,
-    gpu="A10G",  # swap to A100-80GBS for real demo for qwen
+    gpu="H100",  # swap to A100-80GBS for real demo for qwen
     timeout=int(
         60 * 60 * 0.5
-    ),  # 15 mins max runtime to avoid unexpected long-running costs
+    ),  # 30 mins max runtime to avoid unexpected long-running costs
     volumes={"/cache/embeddings": embedding_cache},
     secrets=[modal.Secret.from_name("hf-token")],
-    scaledown_window=300,  # Keeps GPU alive for 2.5 mins
+    scaledown_window=60*10,  # Keeps GPU alive for 10 mins
 )
 class PipelineBackend:
     """Stateful Modal class that owns one in-memory retrieval pipeline.
@@ -49,11 +49,12 @@ class PipelineBackend:
     """
 
     @modal.method()
-    def load_cached_collection(self, selected_retrievers: list[str]):
+    def load_cached_collection(self, selected_retrievers: list[str], custom_papers: str | None = None,):
         """Load collection metadata and cached retriever artifacts for the demo.
 
         Args:
             selected_retrievers: Registry names selected in the UI.
+            custom_papers: Optional filename of custom papers to inject into the collection, located in the ``/cache/embeddings`` volume.
 
         Returns:
             A pair ``(document_count, preview_rows)`` for the Streamlit UI.
@@ -94,7 +95,8 @@ class PipelineBackend:
         import joblib
         import os
 
-        fixed_path = "/cache/embeddings/hf_hub/models--boyes-boys-clef-2026--random-forest-fuser/snapshots/db30a2f44670a5bc6d81ff7f8c0e1b8719de20d9/rf_1d2c99cd554bfc4b.pkl"
+        # fixed_path = "/cache/embeddings/hf_hub/models--boyes-boys-clef-2026--random-forest-fuser/snapshots/db30a2f44670a5bc6d81ff7f8c0e1b8719de20d9/rf_1d2c99cd554bfc4b.pkl"
+        fixed_path = "/cache/embeddings/rf_fusion_models/rf_1d2c99cd554bfc4b.pkl"
 
         if os.path.exists(fixed_path):
             print(f"Force-loading existing model: {fixed_path}")
