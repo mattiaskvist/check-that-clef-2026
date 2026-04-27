@@ -1,6 +1,6 @@
 [project]
 name = "check-that-clef-2026"
-version = "0.1.0"
+version = "1.0.0"
 description = "CLEF 2026 CheckThat source retrieval pipeline, demo, and BGE fine-tuning workspace"
 readme = "README.md"
 authors = [
