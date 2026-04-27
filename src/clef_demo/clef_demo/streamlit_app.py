@@ -376,7 +376,7 @@ def main():
             # Non-blocking remote procedure call
             call = PipelineBackend().load_cached_collection.spawn(
                 selected_retrievers=retrievers,
-                custom_papers="uploads/johan_boye_papers.csv"
+                custom_papers="uploads/johan_boye_papers.csv",
             )
 
             # Preserve state and initiate the polling fragment
