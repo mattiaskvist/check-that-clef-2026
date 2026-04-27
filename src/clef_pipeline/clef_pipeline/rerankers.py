@@ -196,9 +196,9 @@ class NemotronReranker(BaseReranker):
         """
         self._ensure_loaded()
 
-        texts = [
-            f"question:{query} \n \n passage:{corpus[doc_id]}" for doc_id in doc_indices
-        ]
+        safe_indices = [i for i in doc_indices if 0 <= i < len(corpus)]
+
+        texts = [f"question:{query}\n\npassage:{corpus[i]}" for i in safe_indices]
 
         batch_dict = self.tokenizer(
             texts,

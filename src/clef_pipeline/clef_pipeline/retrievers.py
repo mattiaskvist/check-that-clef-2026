@@ -546,7 +546,7 @@ class SparseRetriever(BaseRetriever):
         if not scores_dict:
             if top_k is None:
                 top_k = 0
-            return np.empty((top_k,), dtype=np.int32), np.zeros(
+            return np.empty((top_k,), dtype=np.int64), np.zeros(
                 (top_k,), dtype=np.float32
             )
 
@@ -738,7 +738,7 @@ class SparseRetriever(BaseRetriever):
         """Return the top-k document ids from a sparse score dictionary."""
         if k <= 0 or not scores_dict:
             return []
-        doc_ids = np.fromiter(scores_dict.keys(), dtype=np.int32)
+        doc_ids = np.fromiter(scores_dict.keys(), dtype=np.int64)
         vals = np.fromiter(scores_dict.values(), dtype=np.float32)
         k = min(int(k), len(vals))
         top_idx = np.argpartition(vals, -k)[-k:]
@@ -762,17 +762,17 @@ class SparseRetriever(BaseRetriever):
             top_k = corpus_size
         top_k = min(int(top_k), int(corpus_size))
 
-        doc_ids = np.fromiter(scores_dict.keys(), dtype=np.int32)
+        doc_ids = np.fromiter(scores_dict.keys(), dtype=np.int64)
         vals = np.fromiter(scores_dict.values(), dtype=np.float32)
         if len(vals) == 0:
-            return np.empty((top_k,), dtype=np.int32), np.zeros(
+            return np.empty((top_k,), dtype=np.int64), np.zeros(
                 (top_k,), dtype=np.float32
             )
 
         k = min(top_k, len(vals))
         top_idx = np.argpartition(vals, -k)[-k:]
         top_idx = top_idx[np.argsort(vals[top_idx])[::-1]]
-        ranked_ids = doc_ids[top_idx].astype(np.int32)
+        ranked_ids = doc_ids[top_idx].astype(np.int64)
         ranked_scores = vals[top_idx].astype(np.float32)
 
         if len(ranked_ids) < top_k:
@@ -786,7 +786,7 @@ class SparseRetriever(BaseRetriever):
                         break
             if filler:
                 ranked_ids = np.concatenate(
-                    [ranked_ids, np.asarray(filler, dtype=np.int32)]
+                    [ranked_ids, np.asarray(filler, dtype=np.int64)]
                 )
                 ranked_scores = np.concatenate(
                     [ranked_scores, np.zeros((len(filler),), dtype=np.float32)]
@@ -841,7 +841,7 @@ class SparseRetriever(BaseRetriever):
 
         corpus_size = len(getattr(self.bm25_model, "doc_len", []))
         effective_top_k = corpus_size if top_k is None else min(top_k, corpus_size)
-        rankings = np.empty((len(queries), effective_top_k), dtype=np.int32)
+        rankings = np.empty((len(queries), effective_top_k), dtype=np.int64)
         scores = np.empty((len(queries), effective_top_k), dtype=np.float32)
 
         for query_idx, query_text in enumerate(queries):
@@ -938,7 +938,8 @@ class SparseRetriever(BaseRetriever):
             if corpus_size <= 0 and len(ranked_indices) > 0:
                 corpus_size = int(np.max(ranked_indices)) + 1
             full_scores = np.zeros(corpus_size, dtype=np.float32)
-            full_scores[ranked_indices] = ranked_scores
+            valid = (ranked_indices >= 0) & (ranked_indices < corpus_size)
+            full_scores[ranked_indices[valid]] = ranked_scores[valid]
             return full_scores.tolist()
 
         if cache_name is not None:
