@@ -113,12 +113,14 @@ def read_custom_papers(file_path: str, start_id: int = 11000) -> list[dict]:
 
         for i, row in enumerate(reader):
             pubkey = start_id + i
-            documents.append({
-                "pubkey": pubkey,
-                "title": row.get("Title", "").strip(),
-                "authors": row.get("Authors", "").strip(),
-                "venue": row.get("Venue", "").strip(),
-                "abstract": row.get("Abstract", "").strip(),
-            })
+            documents.append(
+                {
+                    "pubkey": pubkey,
+                    "title": row.get("Title", "").strip(),
+                    "authors": row.get("Authors", "").strip(),
+                    "venue": row.get("Venue", "").strip(),
+                    "abstract": row.get("Abstract", "").strip(),
+                }
+            )
 
     return documents
