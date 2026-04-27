@@ -1,3 +1,10 @@
+"""Mine BM25 hard-negative triplets for dense retriever fine-tuning.
+
+The script is intentionally executable as a one-off data-preparation command.
+It loads the CheckThat train splits, mines one BM25 negative per labeled query,
+and writes newline-delimited JSON triplets consumed by ``train_bge_modal.py``.
+"""
+
 import json
 import sys
 import numpy as np

@@ -1,18 +1,22 @@
+"""Streamlit frontend for interactive CLEF source retrieval."""
+
 import time
 
 import modal
-import pandas as pd
 import streamlit as st
 
 
 @st.cache_resource
 def get_backend():
+    """Return the deployed Modal backend class used by the demo UI."""
     return modal.Cls.from_name("clef-backend", "PipelineBackend")
+
 
 # Refactored Polling Architecture:
 # We use st.fragment to run the check every 2 seconds without blocking Streamlit's main thread.
 @st.fragment(run_every=2)
 def asynchronous_task_monitor():
+    """Poll the asynchronous Modal indexing call without blocking Streamlit."""
     if not st.session_state.get("is_polling", False):
         return
 
@@ -61,7 +65,9 @@ def asynchronous_task_monitor():
             """
         )
 
+
 def truncate(text, limit=100):
+    """Shorten long document metadata for compact card rendering."""
     if not text:
         return ""
     if len(text) <= limit:
@@ -70,6 +76,7 @@ def truncate(text, limit=100):
 
 
 def render_result_card(row, rank):
+    """Render one ranked retrieval result as a styled Streamlit card."""
     title = row.get("title", "Untitled")
     authors = row.get("authors", "")
     abstract = row.get("abstract", "")
@@ -102,8 +109,9 @@ def render_result_card(row, rank):
         unsafe_allow_html=True,
     )
 
-def render_stage_outputs(stages, top_ids, enable_fusion=True):
 
+def render_stage_outputs(stages, top_ids, enable_fusion=True):
+    """Render dense, sparse, fusion, and reranker stage outputs side by side."""
     dense = stages.get("dense", [])[:100]
     sparse = stages.get("sparse", [])[:100]
     rrf = stages.get("rrf", []) if enable_fusion else []
@@ -115,12 +123,13 @@ def render_stage_outputs(stages, top_ids, enable_fusion=True):
 
     def render_stage(col, title, data):
         with col:
-            st.markdown(f'<div class="stage-title">{title}</div>', unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="stage-title">{title}</div>', unsafe_allow_html=True
+            )
 
             lines = []
 
             for item in data:
-
                 # Handle both formats:
                 # dense/sparse: "0 - 99"
                 # rrf/final: "0:4553"
@@ -150,8 +159,11 @@ def render_stage_outputs(stages, top_ids, enable_fusion=True):
     render_stage(c3, "Fusion", rrf)
     render_stage(c4, "Reranker", final)
 
+
 def render_doc_preview(doc, idx):
+    """Render one collection document preview card."""
     import html
+
     title = html.escape(doc.get("title", "Untitled"))
     authors = html.escape(truncate(doc.get("authors", ""), 100))
     abstract = html.escape(truncate(doc.get("abstract", ""), 180))
@@ -179,7 +191,9 @@ def render_doc_preview(doc, idx):
         unsafe_allow_html=True,
     )
 
+
 def main():
+    """Render the Streamlit app and route user actions to the Modal backend."""
     st.set_page_config(page_title="CLEF Source Retrieval Demo", layout="wide")
     st.markdown(
         """
@@ -297,7 +311,7 @@ def main():
         </style>
         """,
         unsafe_allow_html=True,
-        )
+    )
     st.title("CLEF 2026 Source Retrieval Demo")
     st.write(
         "Load precomputed embeddings from the cache and retrieve top-5 article matches for your tweet."
@@ -345,7 +359,6 @@ def main():
             options=["none", "nemotron", "qwen3-reranker-8b"],
             index=1,
         )
-
 
     if not retrievers:
         st.warning("Select at least one retriever.")
@@ -404,7 +417,7 @@ def main():
                 for i, doc in enumerate(docs):
                     render_doc_preview(doc, i + 1)
 
-        col1, col2 = st.columns([1,2])
+        col1, col2 = st.columns([1, 2])
         results = st.session_state.get("results")
         top_ids = st.session_state.get("top_ids")
 
@@ -460,9 +473,7 @@ def main():
 
             st.markdown("---")
             render_stage_outputs(
-                results["stages"],
-                top_ids,
-                enable_fusion=enable_fusion
+                results["stages"], top_ids, enable_fusion=enable_fusion
             )
 
 

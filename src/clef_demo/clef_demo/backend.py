@@ -1,3 +1,5 @@
+"""Modal GPU backend used by the Streamlit demo."""
+
 import modal
 
 app = modal.App("clef-backend")
@@ -28,7 +30,7 @@ embedding_cache = modal.Volume.from_name(
 
 @app.cls(
     image=image,
-    gpu="A10G", # swap to A100-80GBS for real demo for qwen
+    gpu="A10G",  # swap to A100-80GBS for real demo for qwen
     timeout=int(
         60 * 60 * 0.5
     ),  # 15 mins max runtime to avoid unexpected long-running costs
@@ -37,8 +39,24 @@ embedding_cache = modal.Volume.from_name(
     scaledown_window=150,  # Keeps GPU alive for 2.5 mins
 )
 class PipelineBackend:
+    """Stateful Modal class that owns one in-memory retrieval pipeline.
+
+    Streamlit first calls ``load_cached_collection`` to load the collection and
+    cached retriever artifacts inside the GPU container. Later ``search`` calls
+    reuse that same in-memory pipeline as long as the Modal container remains
+    alive.
+    """
+
     @modal.method()
     def load_cached_collection(self, selected_retrievers: list[str]):
+        """Load collection metadata and cached retriever artifacts for the demo.
+
+        Args:
+            selected_retrievers: Registry names selected in the UI.
+
+        Returns:
+            A pair ``(document_count, preview_rows)`` for the Streamlit UI.
+        """
         from clef_pipeline.pipeline_config import (
             PipelineConfig,
             RerankerConfig,
@@ -65,27 +83,27 @@ class PipelineBackend:
         self.pipeline = build_pipeline_from_config(config)
         self.pipeline.index_collection(base_docs, cache_dir="/cache/embeddings")
 
-        import os
         import joblib
-        
+        import os
+
         fixed_path = "/cache/embeddings/hf_hub/models--boyes-boys-clef-2026--random-forest-fuser/snapshots/db30a2f44670a5bc6d81ff7f8c0e1b8719de20d9/rf_1d2c99cd554bfc4b.pkl"
 
         if os.path.exists(fixed_path):
             print(f"Force-loading existing model: {fixed_path}")
             payload = joblib.load(fixed_path)
-            
+
             if isinstance(payload, dict) and "model" in payload:
                 self.pipeline.fuser.model = payload["model"]
             else:
-                self.pipeline.fuser.model = payload # Fallback if it was just the model
-                
+                self.pipeline.fuser.model = payload  # Fallback if it was just the model
+
             self.pipeline.fuser._trained = True
         else:
             print("Fixed path not found, running standard prepare...")
             self.pipeline.prepare_fusion_model(
                 cache_dir="/cache/embeddings",
                 languages=["en", "fr", "de"],
-                force_retrain_fusion=False
+                force_retrain_fusion=False,
             )
 
         # only grab the first 5 documents to send back as a preview
@@ -114,6 +132,12 @@ class PipelineBackend:
         fusion_top_k: int = 30,
         reranker_name: str = "none",
     ):
+        """Search a tweet with runtime-selected fusion and reranking settings.
+
+        Raises:
+            RuntimeError: If the Modal container restarted and lost its
+                in-memory pipeline state.
+        """
         if not hasattr(self, "pipeline") or self.pipeline is None:
             raise RuntimeError(
                 "Pipeline not initialized. The container may have restarted. Load cached embeddings first."
@@ -155,16 +179,24 @@ class PipelineBackend:
 
         if runtime_config.fusion_method == "random_forest":
             from clef_pipeline.fusions import RandomForestFuser
-            if isinstance(self.pipeline.fuser, RandomForestFuser) and self.pipeline.fuser.model:
+
+            if (
+                isinstance(self.pipeline.fuser, RandomForestFuser)
+                and self.pipeline.fuser.model
+            ):
                 runtime_pipeline.fuser.model = self.pipeline.fuser.model
                 runtime_pipeline.fuser._trained = True
             else:
                 # If we have to load from disk in the search call
-                import joblib, os
-                fixed_path = "..." 
+                import joblib
+                import os
+
+                fixed_path = "..."
                 if os.path.exists(fixed_path):
                     payload = joblib.load(fixed_path)
-                    runtime_pipeline.fuser.model = payload["model"] if isinstance(payload, dict) else payload
+                    runtime_pipeline.fuser.model = (
+                        payload["model"] if isinstance(payload, dict) else payload
+                    )
                     runtime_pipeline.fuser._trained = True
 
         result = runtime_pipeline.search_text(query_text, lang="auto")

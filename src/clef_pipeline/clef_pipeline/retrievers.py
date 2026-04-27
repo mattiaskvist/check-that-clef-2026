@@ -294,6 +294,8 @@ class HarrierRetriever(BaseRetriever):
         """
         import os
 
+        from sentence_transformers import SentenceTransformer
+
         if cache_path and os.path.exists(cache_path) and not force_recompute:
             print(f"[cache hit] Loading {label} from {cache_path}")
             embs = self.torch.load(cache_path, map_location="cuda", weights_only=True)
@@ -302,8 +304,6 @@ class HarrierRetriever(BaseRetriever):
 
         if force_recompute and cache_path and os.path.exists(cache_path):
             print(f"[cache bypass] Recomputing {label} from source texts.")
-
-        from sentence_transformers import SentenceTransformer
 
         if self.model is None:
             self.model = SentenceTransformer(
@@ -546,7 +546,9 @@ class SparseRetriever(BaseRetriever):
         if not scores_dict:
             if top_k is None:
                 top_k = 0
-            return np.empty((top_k,), dtype=np.int64), np.zeros((top_k,), dtype=np.float32)
+            return np.empty((top_k,), dtype=np.int64), np.zeros(
+                (top_k,), dtype=np.float32
+            )
 
         if lang == "en" and self._term_graph is not None:
             expanded = self._diffusion_expand(tokenized_query, self._term_graph)
@@ -573,7 +575,7 @@ class SparseRetriever(BaseRetriever):
                     postings = self.bm25_model.index.get(term)
                     if not postings:
                         continue
-                    weight = (count / total)
+                    weight = count / total
                     for doc_id, _ in postings:
                         scores_dict[doc_id] += self.prf_weight * weight
 
@@ -689,6 +691,12 @@ class SparseRetriever(BaseRetriever):
         self._query_scores_by_name.clear()
 
     def _build_term_graph(self, docs: list[list[str]]):
+        """Build an undirected term co-occurrence graph from tokenized documents.
+
+        The sparse retriever uses this graph for query diffusion: terms that
+        repeatedly appear near each other in the collection can contribute a
+        small amount of weight to each other at search time.
+        """
         from collections import Counter, defaultdict
 
         term_graph = defaultdict(Counter)
@@ -705,6 +713,7 @@ class SparseRetriever(BaseRetriever):
         return term_graph
 
     def _diffusion_expand(self, tokens: list[str], term_graph):
+        """Expand query tokens with weighted neighbors from the term graph."""
         from collections import Counter
 
         weights = Counter({t: 1.0 for t in tokens})
@@ -717,8 +726,8 @@ class SparseRetriever(BaseRetriever):
                     continue
                 total = float(sum(neighbors.values())) + 1e-9
                 for neighbor, count in neighbors.most_common(int(self.diff_neighbors)):
-                    new_weights[neighbor] += weight * (count / total) * float(
-                        self.diffusion_decay
+                    new_weights[neighbor] += (
+                        weight * (count / total) * float(self.diffusion_decay)
                     )
             weights.update(new_weights)
 
@@ -726,6 +735,7 @@ class SparseRetriever(BaseRetriever):
 
     @staticmethod
     def _top_docs(scores_dict, k: int) -> list[int]:
+        """Return the top-k document ids from a sparse score dictionary."""
         if k <= 0 or not scores_dict:
             return []
         doc_ids = np.fromiter(scores_dict.keys(), dtype=np.int64)
@@ -738,6 +748,12 @@ class SparseRetriever(BaseRetriever):
     def _rank_and_pad(
         self, scores_dict, top_k: int | None
     ) -> tuple[np.ndarray, np.ndarray]:
+        """Convert sparse scores to fixed-length ranked ids and score arrays.
+
+        Fusion code expects dense and sparse score arrays to be indexable by
+        document id. If BM25 returns fewer than ``top_k`` matches, the method
+        pads with zero-scored documents so downstream stages keep stable shapes.
+        """
         corpus_size = len(getattr(getattr(self, "bm25_model", None), "doc_len", []))
         if corpus_size <= 0:
             corpus_size = len(getattr(self, "_docs_tokens", []) or [])
@@ -749,7 +765,9 @@ class SparseRetriever(BaseRetriever):
         doc_ids = np.fromiter(scores_dict.keys(), dtype=np.int64)
         vals = np.fromiter(scores_dict.values(), dtype=np.float32)
         if len(vals) == 0:
-            return np.empty((top_k,), dtype=np.int64), np.zeros((top_k,), dtype=np.float32)
+            return np.empty((top_k,), dtype=np.int64), np.zeros(
+                (top_k,), dtype=np.float32
+            )
 
         k = min(top_k, len(vals))
         top_idx = np.argpartition(vals, -k)[-k:]
@@ -767,7 +785,9 @@ class SparseRetriever(BaseRetriever):
                     if len(filler) >= needed:
                         break
             if filler:
-                ranked_ids = np.concatenate([ranked_ids, np.asarray(filler, dtype=np.int64)])
+                ranked_ids = np.concatenate(
+                    [ranked_ids, np.asarray(filler, dtype=np.int64)]
+                )
                 ranked_scores = np.concatenate(
                     [ranked_scores, np.zeros((len(filler),), dtype=np.float32)]
                 )
