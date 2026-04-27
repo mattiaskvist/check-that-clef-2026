@@ -42,11 +42,16 @@ The mining process is intentionally simple and reproducible:
    top 10 ranked collection documents.
 5. Select the first high-ranking document whose `pubkey` is not the labeled
    positive `pubkey`; that document becomes the hard negative.
-6. For German and French queries, first try to reuse the English query text
-   that points to the same positive `pubkey`. This gives the lexical miner an
-   English proxy query against an English scientific-paper collection. If no
-   English proxy exists, the script falls back to the original German or French
-   text.
+6. For German and French queries, use an English proxy only for the BM25
+   negative search when possible. The script builds a lookup from each English
+   training `pubkey` to its English claim text. If a German or French training
+   row has the same positive `pubkey`, BM25 searches with that English claim
+   instead of the German or French text. This makes the lexical search more
+   reliable because the collection documents are mostly English scientific titles and
+   abstracts. The generated triplet still keeps the original German or French
+   query as the `anchor`; the proxy is only used to choose a better hard
+   negative. If no English query exists for that `pubkey`, the script falls
+   back to searching with the original German or French query text.
 7. Skip any query whose labeled positive paper is missing from the collection,
    or where no non-positive BM25 candidate is found in the inspected top
    results.
