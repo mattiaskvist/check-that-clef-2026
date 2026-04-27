@@ -31,7 +31,7 @@ The pipeline reads the public Hugging Face dataset
 `sschellhammer/CT26_Task1_SourceRetrievalForScientificWebClaims` and caches
 expensive artifacts in Modal volumes.
 
-![Retrieval architecture](docs/assets/retrieval-architecture.svg)
+![Retrieval architecture](docs/assets/retrieval-architecture.jpg)
 
 ## Results
 
