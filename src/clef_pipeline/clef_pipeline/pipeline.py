@@ -290,13 +290,13 @@ class RetrievalPipeline:
         return dense_key, sparse_key
 
     def _run_retrievers_for_query(
-        self, query_idx: int, lang: str
+        self, query_idx: int, cache_lang: str
     ) -> tuple[dict[str, list[int]], dict[str, list[float]]]:
         """Run all retrievers for one indexed query.
 
         Args:
             query_idx: Query position in indexed query cache.
-            lang: Cache language key used when indexing queries.
+            cache_lang: Cache language key used when indexing queries.
 
         Returns:
             Ranked indices per retriever stage and optional stage score lists.
@@ -307,10 +307,10 @@ class RetrievalPipeline:
         ranked_indices_by_stage: dict[str, list[int]] = {}
         score_lists_by_stage: dict[str, list[float]] = {}
         for retriever_name, retriever in self.retrievers.items():
-            cache_name = self._cache_names.get((retriever_name, lang))
+            cache_name = self._cache_names.get((retriever_name, cache_lang))
             if cache_name is None:
                 raise KeyError(
-                    f"No indexed query cache for retriever '{retriever_name}' and lang '{lang}'."
+                    f"No indexed query cache for retriever '{retriever_name}' and lang '{cache_lang}'."
                 )
 
             search_with_scores = getattr(retriever, "search_with_scores", None)
@@ -383,20 +383,25 @@ class RetrievalPipeline:
         return [doc_idx for doc_idx, _score in reranked]
 
     def search_cached_query(
-        self, query_idx: int, query_text: str, lang: str
+        self,
+        query_idx: int,
+        query_text: str,
+        lang: str,
+        cache_lang: str | None = None,
     ) -> dict[str, object]:
         """Search using pre-indexed query caches and return stage outputs.
 
         Args:
             query_idx: Query position in language cache.
             query_text: Original query text for reranker input.
-            lang: Language cache key.
+            lang: Actual query language code.
+            cache_lang: Optional cache key namespace. Defaults to ``lang``.
 
         Returns:
             Dict containing final predictions and per-stage publication keys.
         """
         ranked_indices_by_stage, score_lists_by_stage = self._run_retrievers_for_query(
-            query_idx=query_idx, lang=lang
+            query_idx=query_idx, cache_lang=cache_lang or lang
         )
         candidate_indices = self._choose_candidates(
             ranked_indices_by_stage=ranked_indices_by_stage,

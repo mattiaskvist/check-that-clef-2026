@@ -1,5 +1,9 @@
 """Cross-encoder reranker implementations used after candidate retrieval."""
 
+import warnings
+
+warnings.filterwarnings("ignore", message=".*input_embeds.*", category=FutureWarning)
+
 from transformers import AutoModel, AutoModelForSequenceClassification
 from .interfaces import BaseReranker
 
@@ -261,7 +265,7 @@ class JinaReranker(BaseReranker):
     def rerank(
         self, query: str, doc_indices: list[int], corpus: list[str]
     ) -> list[tuple[int, float]]:
-        """Rerank candidate documents using Jina's compute_score method.
+        """Rerank candidate documents using Jina's rerank method.
 
         Args:
             query: Query text.
@@ -273,16 +277,19 @@ class JinaReranker(BaseReranker):
         """
         self._ensure_loaded()
 
-        # pairs = [[query, corpus[doc_id]] for doc_id in doc_indices]
-
         with self.torch.inference_mode():
-            scores = self.model.rerank(query, [corpus[doc_id][:2048] for doc_id in doc_indices])
+            # Jina's rerank automatically sorts and returns a list of dictionaries
+            jina_results = self.model.rerank(
+                query, 
+                [corpus[doc_id][:2048] for doc_id in doc_indices]
+            )
 
-        if not isinstance(scores, list):
-            scores = [scores]
-
-        results = list(zip(doc_indices, scores))
-        results.sort(key=lambda x: x[1].get('relevance_score'), reverse=True)
+        results = []
+        for res in jina_results:
+            # Map the index returned by Jina back to our original document ID
+            orig_doc_id = doc_indices[res['index']]
+            score = float(res['relevance_score'])
+            results.append((orig_doc_id, score))
 
         return results
 

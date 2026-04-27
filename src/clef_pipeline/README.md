@@ -91,6 +91,10 @@ uv run modal run -m clef_pipeline.main \
   --submission-download-dir submissions
 ```
 
+The official `test` split does not include `pubkey`, so this mode is submission-only:
+the pipeline will generate predictions, but it will not compute local metrics or
+write a metrics JSON file.
+
 You can also run on `train` for debugging or analysis:
 
 ```bash

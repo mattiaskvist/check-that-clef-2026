@@ -13,7 +13,7 @@ from .submission import (
     submission_volume_remote_dir,
     write_submission_tsv_files,
 )
-from .utils import CHECKTHAT_DATASET, read_custom_papers
+from .utils import CHECKTHAT_DATASET, load_query_split, read_custom_papers
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
@@ -58,7 +58,10 @@ def _print_language_summary(
     metrics = data["metrics"]
     if metrics is None:
         print(f"\n--- Summary for {lang.upper()} ({data['Total Queries']} Queries) ---")
-        print("No labels available; generated predictions only.")
+        print(
+            f"No labels available; generated predictions only. "
+            f"Labeled: {data['Labeled Queries']}, Unlabeled: {data['Unlabeled Queries']}."
+        )
         return
 
     print(f"\n--- Summary for {lang.upper()} ({data['Total Queries']} Queries) ---")
@@ -76,10 +79,44 @@ def _print_language_summary(
     )
 
 
+def _validate_metrics_output_request(split: str, metrics_output_file: str | None) -> None:
+    """Reject metrics export for splits without labels."""
+    if split == "test" and metrics_output_file:
+        raise ValueError(
+            "metrics_output_file is not supported for split='test' because the "
+            "official test set has no pubkey labels."
+        )
+
+
+def _record_query_result(
+    *,
+    lang: str,
+    row: dict,
+    query_idx: int,
+    result: dict[str, object],
+    metrics: EvaluationMetrics,
+    submission_predictions: dict[str, list[dict[str, object]]] | None = None,
+) -> None:
+    """Update submission payloads and metrics for one evaluated query."""
+    if submission_predictions is not None:
+        submission_predictions[lang].append(
+            {
+                "index": row.get("index", query_idx),
+                "preds": result["preds"][:SUBMISSION_TOP_K],
+            }
+        )
+
+    metrics.add_query(
+        lang=lang,
+        true_pubkey=row.get("pubkey"),
+        stages=result["stages"],
+    )
+
+
 @app.function(
     image=image,
-    gpu="L4",
-    timeout=60 * 60 * 3,
+    gpu="H100",
+    timeout=60 * 60 * 10,
     secrets=[modal.Secret.from_name("hf-token")],
     volumes={CACHE_MOUNT: embedding_cache},
 )
@@ -167,13 +204,15 @@ def evaluate_pipeline(
 
     languages = ["de", "fr", "en"]
     lang_tweets: dict[str, list[dict]] = {}
+    cache_langs = {lang: f"{split}_{lang}" for lang in languages}
     for lang in languages:
-        tweets = list(load_dataset(CHECKTHAT_DATASET, lang)[split])
+        tweets = load_query_split(lang, split)
         lang_tweets[lang] = tweets
         query_texts = [row["text"] for row in tweets]
         pipeline.index_queries_for_language(
             lang=lang,
             query_texts=query_texts,
+            cache_lang=cache_langs[lang],
             cache_dir=CACHE_MOUNT,
             force_recompute_sparse_cache=force_recompute_sparse_cache,
             force_recompute_dense_queries=force_recompute_dense_queries,
@@ -210,20 +249,18 @@ def evaluate_pipeline(
                 query_idx=i,
                 query_text=row["text"],
                 lang=lang,
+                cache_lang=cache_langs[lang],
             )
 
-            if collect_submission:
-                submission_predictions[lang].append(
-                    {
-                        "index": row.get("index", i),
-                        "preds": result["preds"][:SUBMISSION_TOP_K],
-                    }
-                )
-
-            metrics.add_query(
+            _record_query_result(
                 lang=lang,
-                true_pubkey=row.get("pubkey"),
-                stages=result["stages"],
+                row=row,
+                query_idx=i,
+                result=result,
+                metrics=metrics,
+                submission_predictions=(
+                    submission_predictions if collect_submission else None
+                ),
             )
 
     summary = metrics.summary()
@@ -240,7 +277,10 @@ def evaluate_pipeline(
         data = global_results[lang]
         lang_metrics = data["metrics"]
         if lang_metrics is None:
-            print(f"\n[{lang.upper()}] - {data['Total Queries']} Queries (No labels)")
+            print(
+                f"\n[{lang.upper()}] - {data['Total Queries']} Queries "
+                f"({data['Unlabeled Queries']} unlabeled, submission-only)"
+            )
             continue
         print(f"\n[{lang.upper()}] - {data['Total Queries']} Queries Evaluated")
         print(
@@ -256,27 +296,34 @@ def evaluate_pipeline(
             f"  └─ Final Rerank:  MRR@5: {lang_metrics['final']['mrr5']:.4f} | R@5: {lang_metrics['final']['r5']:.4f}"
         )
 
-    print(
-        "\n================================================================================"
-    )
-    print(
-        f"[GLOBAL AVERAGE] - {summary['total_labeled_queries']} Total Queries Across All Languages"
-    )
-    print(
-        f"  ├─ Overall Dense:    MRR@5: {summary['global']['dense']['mrr5']:.4f} | R@5: {summary['global']['dense']['r5']:.4f} | R@10: {summary['global']['dense']['r10']:.4f} | R@30: {summary['global']['dense']['r30']:.4f} | R@50: {summary['global']['dense']['r50']:.4f}"
-    )
-    print(
-        f"  ├─ Overall Sparse:   MRR@5: {summary['global']['sparse']['mrr5']:.4f} | R@5: {summary['global']['sparse']['r5']:.4f} | R@10: {summary['global']['sparse']['r10']:.4f} | R@30: {summary['global']['sparse']['r30']:.4f} | R@50: {summary['global']['sparse']['r50']:.4f}"
-    )
-    print(
-        f"  ├─ Overall {fusion_label}:      MRR@5: {summary['global']['rrf']['mrr5']:.4f} | R@{config.fusion_top_k}: {summary['global']['rrf'][f'r{config.fusion_top_k}']:.4f}"
-    )
-    print(
-        f"  └─ Overall Final:    MRR@5: {summary['global']['final']['mrr5']:.4f} | R@5: {summary['global']['final']['r5']:.4f}"
-    )
-    print(
-        "================================================================================\n"
-    )
+    print("\n================================================================================")
+    if summary["global"] is None:
+        print(
+            "[GLOBAL SUMMARY] - No labeled queries available; skipped metric "
+            "aggregation for this run."
+        )
+        print(
+            f"  Total queries: {summary['total_queries']} | "
+            f"Unlabeled queries: {summary['total_unlabeled_queries']}"
+        )
+    else:
+        print(
+            f"[GLOBAL AVERAGE] - {summary['total_labeled_queries']} Total Labeled "
+            "Queries Across All Languages"
+        )
+        print(
+            f"  ├─ Overall Dense:    MRR@5: {summary['global']['dense']['mrr5']:.4f} | R@5: {summary['global']['dense']['r5']:.4f} | R@10: {summary['global']['dense']['r10']:.4f} | R@30: {summary['global']['dense']['r30']:.4f} | R@50: {summary['global']['dense']['r50']:.4f}"
+        )
+        print(
+            f"  ├─ Overall Sparse:   MRR@5: {summary['global']['sparse']['mrr5']:.4f} | R@5: {summary['global']['sparse']['r5']:.4f} | R@10: {summary['global']['sparse']['r10']:.4f} | R@30: {summary['global']['sparse']['r30']:.4f} | R@50: {summary['global']['sparse']['r50']:.4f}"
+        )
+        print(
+            f"  ├─ Overall {fusion_label}:      MRR@5: {summary['global']['rrf']['mrr5']:.4f} | R@{config.fusion_top_k}: {summary['global']['rrf'][f'r{config.fusion_top_k}']:.4f}"
+        )
+        print(
+            f"  └─ Overall Final:    MRR@5: {summary['global']['final']['mrr5']:.4f} | R@5: {summary['global']['final']['r5']:.4f}"
+        )
+    print("================================================================================\n")
     logger.info("Evaluation completed in %.2fs", timer.elapsed_seconds())
 
     submission_artifacts = None
@@ -337,6 +384,9 @@ def main(
         submission_download_dir: Local destination for downloaded submission files.
         hf_fusion_repo_id: Hugging Face repository ID to push/pull fusion models.
     """
+    split = normalize_split(split)
+    _validate_metrics_output_request(split, metrics_output_file)
+
     run_output = evaluate_pipeline.remote(
         force_recompute_sparse_cache=force_recompute_sparse_cache,
         force_recompute_dense_documents=force_recompute_dense_documents,
