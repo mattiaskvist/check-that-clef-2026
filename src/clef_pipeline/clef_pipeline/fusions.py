@@ -103,6 +103,7 @@ class FeatureGenerator:
 
     @staticmethod
     def get_feature_names(include_rrf: bool = True) -> list[str]:
+        """Return feature names in the same order as ``build_query_features``."""
         if include_rrf:
             return list(FeatureGenerator.FEATURE_NAMES_WITH_RRF)
         return list(FeatureGenerator.FEATURE_NAMES_WITHOUT_RRF)
@@ -147,6 +148,12 @@ class RRFFuser(BaseFuser):
     """Reciprocal Rank Fusion — the existing static baseline."""
 
     def __init__(self, rrf_k: int = 60):
+        """Create an RRF fuser.
+
+        Args:
+            rrf_k: Rank-smoothing constant. Higher values make early ranks less
+                dominant and give deeper candidates more influence.
+        """
         self.rrf_k = rrf_k
 
     def fuse(
@@ -252,6 +259,7 @@ class RandomForestFuser(BaseFuser):
         return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
     def _cache_path(self, cache_dir: str) -> str:
+        """Return the local cache path for the currently fingerprinted model."""
         if self._fingerprint is None:
             raise RuntimeError("Fingerprint not set — call train() or load() first.")
         os.makedirs(os.path.join(cache_dir, "rf_fusion_models"), exist_ok=True)

@@ -691,6 +691,12 @@ class SparseRetriever(BaseRetriever):
         self._query_scores_by_name.clear()
 
     def _build_term_graph(self, docs: list[list[str]]):
+        """Build an undirected term co-occurrence graph from tokenized documents.
+
+        The sparse retriever uses this graph for query diffusion: terms that
+        repeatedly appear near each other in the collection can contribute a
+        small amount of weight to each other at search time.
+        """
         from collections import Counter, defaultdict
 
         term_graph = defaultdict(Counter)
@@ -707,6 +713,7 @@ class SparseRetriever(BaseRetriever):
         return term_graph
 
     def _diffusion_expand(self, tokens: list[str], term_graph):
+        """Expand query tokens with weighted neighbors from the term graph."""
         from collections import Counter
 
         weights = Counter({t: 1.0 for t in tokens})
@@ -728,6 +735,7 @@ class SparseRetriever(BaseRetriever):
 
     @staticmethod
     def _top_docs(scores_dict, k: int) -> list[int]:
+        """Return the top-k document ids from a sparse score dictionary."""
         if k <= 0 or not scores_dict:
             return []
         doc_ids = np.fromiter(scores_dict.keys(), dtype=np.int32)
@@ -740,6 +748,12 @@ class SparseRetriever(BaseRetriever):
     def _rank_and_pad(
         self, scores_dict, top_k: int | None
     ) -> tuple[np.ndarray, np.ndarray]:
+        """Convert sparse scores to fixed-length ranked ids and score arrays.
+
+        Fusion code expects dense and sparse score arrays to be indexable by
+        document id. If BM25 returns fewer than ``top_k`` matches, the method
+        pads with zero-scored documents so downstream stages keep stable shapes.
+        """
         corpus_size = len(getattr(getattr(self, "bm25_model", None), "doc_len", []))
         if corpus_size <= 0:
             corpus_size = len(getattr(self, "_docs_tokens", []) or [])

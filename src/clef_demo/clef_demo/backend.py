@@ -1,3 +1,5 @@
+"""Modal GPU backend used by the Streamlit demo."""
+
 import modal
 
 app = modal.App("clef-backend")
@@ -37,6 +39,13 @@ embedding_cache = modal.Volume.from_name(
     scaledown_window=150,  # Keeps GPU alive for 2.5 mins
 )
 class PipelineBackend:
+    """Stateful Modal class that owns one in-memory retrieval pipeline.
+
+    Streamlit first calls ``index_documents`` to load data and build retriever
+    indexes inside the GPU container. Later ``search`` calls reuse that same
+    in-memory pipeline as long as the Modal container remains alive.
+    """
+
     @modal.method()
     def index_documents(
         self,
@@ -46,6 +55,18 @@ class PipelineBackend:
         fusion_top_k: int,
         custom_docs: list[dict],
     ):
+        """Load the collection and build a demo pipeline in the Modal container.
+
+        Args:
+            selected_retrievers: Registry names selected in the UI.
+            enable_fusion: Whether multiple retriever outputs should be fused.
+            enable_reranker: Whether to apply the Nemotron reranker.
+            fusion_top_k: Number of candidates passed from fusion to reranking.
+            custom_docs: Optional documents merged by ``pubkey`` before indexing.
+
+        Returns:
+            A pair ``(document_count, preview_rows)`` for the Streamlit UI.
+        """
         from clef_pipeline.pipeline_config import (
             PipelineConfig,
             RerankerConfig,
@@ -91,6 +112,12 @@ class PipelineBackend:
 
     @modal.method()
     def search(self, query_text: str):
+        """Search a tweet against the already-indexed demo pipeline.
+
+        Raises:
+            RuntimeError: If the Modal container restarted and lost its
+                in-memory pipeline state.
+        """
         if not hasattr(self, "pipeline") or self.pipeline is None:
             raise RuntimeError(
                 "Pipeline not initialized. The container may have restarted. Please index first."

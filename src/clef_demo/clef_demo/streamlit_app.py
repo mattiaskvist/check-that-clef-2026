@@ -1,3 +1,5 @@
+"""Streamlit frontend for interactive CLEF source retrieval."""
+
 import json
 import time
 
@@ -8,10 +10,12 @@ import streamlit as st
 
 @st.cache_resource
 def get_backend():
+    """Return the deployed Modal backend class used by the demo UI."""
     return modal.Cls.from_name("clef-backend", "PipelineBackend")
 
 
 def _parse_custom_docs(raw_json: str) -> list[dict]:
+    """Validate optional custom-document JSON before sending it to Modal."""
     if not raw_json.strip():
         return
     parsed = json.loads(raw_json)
@@ -33,6 +37,7 @@ def _parse_custom_docs(raw_json: str) -> list[dict]:
 # We use st.fragment to run the check every 2 seconds without blocking Streamlit's main thread.
 @st.fragment(run_every=2)
 def asynchronous_task_monitor():
+    """Poll the asynchronous Modal indexing call without blocking Streamlit."""
     if not st.session_state.get("is_polling", False):
         return
 
@@ -75,6 +80,7 @@ def asynchronous_task_monitor():
 
 
 def main():
+    """Render the Streamlit app and route user actions to the Modal backend."""
     st.set_page_config(page_title="CLEF Source Retrieval Demo", layout="wide")
     st.title("CLEF 2026 Source Retrieval Demo")
     st.write(
