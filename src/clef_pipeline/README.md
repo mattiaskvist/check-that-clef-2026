@@ -1,87 +1,242 @@
-# CLEF Pipeline (`src/clef_pipeline`)
+# CLEF Pipeline
 
-This package contains the full evaluation pipeline. It combines dense retrieval with sparse BM25 retrieval, applies RRF fusion, and optionally reranks with a cross-encoder. The entrypoint is `clef_pipeline.main`.
+`src/clef_pipeline` contains the retrieval, fusion, reranking, evaluation, and
+submission-export pipeline. The primary entrypoint is the Modal app exposed by
+`clef_pipeline.main`.
 
-## Package file map
+## What It Does
 
-Core module files under `src/clef_pipeline/clef_pipeline/`:
+For each query language (`de`, `fr`, `en`), the pipeline:
 
-- `main.py` — Modal app definition, remote evaluation function, and local CLI entrypoint used by `uv run modal run -m clef_pipeline.main`.
-- `pipeline.py` — `RetrievalPipeline` orchestration class: collection/query indexing, retriever execution, candidate fusion, reranking, and search output shaping.
-- `pipeline_config.py` — frozen dataclass config objects (`RetrieverConfig`, `RerankerConfig`, `PipelineConfig`) plus preset profile builder.
-- `registry.py` — string-to-component factory functions (`create_retriever`, `create_reranker`) and pipeline assembly helper.
-- `retrievers.py` — dense retrievers (BGE-M3, Harrier) and sparse BM25+ retriever including embedding/query cache behavior.
-- `rerankers.py` — cross-encoder rerankers that score fusion candidates and return sorted `(doc_index, score)` tuples.
-- `metrics.py` — metric accumulator for multilingual evaluation, producing per-language and global summaries.
-- `submission.py` — Codabench TSV writing utilities and Modal volume path/download command helpers.
-- `interfaces.py` — abstract base contracts for retriever/reranker implementations.
-- `logging_utils.py` — shared logger initialization and elapsed-time helper.
-- `utils.py` — shared constants, ranking utilities (`MRR_at_5`, `recall_at_K`), and reciprocal-rank-fusion processor.
-- `__init__.py` — package-level export list.
+- loads the CheckThat collection and query split from Hugging Face;
+- indexes the collection with enabled dense and sparse retrievers;
+- precomputes per-language query caches;
+- fuses retriever candidates with RRF or Random Forest fusion;
+- optionally reranks fused candidates with a cross-encoder or generative
+  reranker;
+- reports MRR/Recall metrics for labeled splits; and
+- optionally writes Codabench-compatible TSV files.
 
-## How to run
+The expensive parts run in Modal on GPU-backed containers. Dense embeddings,
+sparse rankings, fusion models, and submission artifacts are persisted in the
+Modal volume `checkthat-embedding-cache`.
 
-1. Sign up for a Modal account at https://modal.com/, install the Modal CLI and log in.
+## Components
+
+Configured retrievers are resolved through `clef_pipeline.registry`:
+
+- `sparse`: BM25-style retriever with optional bigrams and translation.
+- `harrier-270m`: Microsoft Harrier 270M dense retriever.
+- `harrier-27b`: Microsoft Harrier 27B dense retriever.
+- `bge-m3`: BGE-M3 with the project LoRA adapter
+  `boyes-boys-clef-2026/bge-m3-checkthat-finetuned`.
+
+Configured rerankers are:
+
+- `nemotron`
+- `gemma2b`
+- `jina-v3`
+- `qwen3-reranker-8b`
+- `qwen3-reranker-4b`
+- `qwen3-reranker-0.6b`
+
+Fusion methods are:
+
+- `rrf`: static reciprocal rank fusion.
+- `random_forest`: learned candidate fusion using dense/sparse score and rank
+  features.
+
+## Prerequisites
+
+From the repository root:
 
 ```bash
+uv sync
 uv run modal setup
-```
-
-2. Ensure you have your Hugging Face API token stored as a Modal Secret named "hf-token". You can create this secret using the Modal CLI:
-
-```bash
 uv run modal secret create hf-token HF_TOKEN=hf_XXXXXXXXXXXXXXXXXXXXXXXXXXXX
 ```
 
-3. Ensure you have access to required Hugging Face model repos (for configured retrievers/rerankers).
+The selected models must be accessible to the Hugging Face token stored in the
+Modal secret named `hf-token`.
+
+## Profiles And CLI Options
+
+Built-in profiles are defined in `clef_pipeline.pipeline_config`:
+
+- `demo`: `harrier-270m` plus `sparse`, with `nemotron` reranking.
+- `evaluation`: `harrier-27b` plus `sparse`, with `nemotron` reranking.
+- `retrieval-only`: `harrier-270m` plus `sparse`, no reranker.
+- `custom`: configured from CLI flags such as `--dense-model`,
+  `--disable-sparse`, `--reranker-model`, and `--disable-reranker`.
+
+Default local entrypoint options include:
 
 ```bash
-# from root of the project, run:
+uv run modal run -m clef_pipeline.main \
+  --split dev \
+  --profile custom \
+  --dense-model harrier-27b \
+  --fusion-method rrf \
+  --reranker-model nemotron
+```
+
+Valid splits are `train`, `dev`, and `test`. The `test` split has no labels, so
+it supports prediction export but not metrics export.
+
+## Evaluation Runs
+
+Run the default evaluation profile:
+
+```bash
 uv run modal run -d -m clef_pipeline.main
 ```
 
-## How the Modal workflow works
+Run dense-only BGE-M3 retrieval:
 
-- `uv run modal run ...` starts your **local entrypoint** on your machine, and that entrypoint launches the heavy retrieval/reranking work as a **remote Modal function**.
-- The expensive compute (GPU, model inference, indexing) runs in Modal's cloud containers, not on your laptop.
-- With `-d`, the app is not stopped if your local process dies or disconnects.
+```bash
+uv run modal run -d -m clef_pipeline.main \
+  --profile custom \
+  --dense-model bge-m3 \
+  --disable-sparse \
+  --disable-reranker \
+  --split dev
+```
 
-### Do you need to keep your computer running?
+Run sparse-only retrieval:
 
-- For pure evaluation runs (`uv run modal run -d -m clef_pipeline.main`), you can treat it as fire-and-forget once it's started.
-- For submission export, this project writes `predictions_{lang}.tsv` to the Modal volume and prints a `modal volume get ...` command you can run locally to download them.
+```bash
+uv run modal run -d -m clef_pipeline.main \
+  --profile custom \
+  --dense-model "" \
+  --disable-reranker \
+  --split dev
+```
 
-Sparse query rankings and scores are cached between runs (under the existing Modal volume mount), so reranking and fusion experiments can iterate without recomputing BM25 for each query.
+Run hybrid retrieval with learned fusion and no reranker:
 
-If you need to rebuild sparse cache artifacts after code changes, run:
+```bash
+uv run modal run -d -m clef_pipeline.main \
+  --profile custom \
+  --dense-model harrier-27b \
+  --fusion-method random_forest \
+  --disable-reranker \
+  --split dev
+```
+
+Write metrics to a local JSON file for labeled splits:
+
+```bash
+uv run modal run -d -m clef_pipeline.main \
+  --split dev \
+  --metrics-output-file metrics_dev.json
+```
+
+## Cache Controls
+
+The pipeline fingerprints source text and model settings so cached artifacts can
+be reused safely between runs.
+
+Force sparse query cache rebuild:
 
 ```bash
 uv run modal run -d -m clef_pipeline.main --force-recompute-sparse-cache
 ```
 
-Dense embeddings are also cached between runs. You can force dense recomputation independently:
+Force dense document embedding rebuild:
 
 ```bash
-# Recompute dense document embeddings
 uv run modal run -d -m clef_pipeline.main --force-recompute-dense-documents
+```
 
-# Recompute dense query embeddings
+Force dense query embedding rebuild:
+
+```bash
 uv run modal run -d -m clef_pipeline.main --force-recompute-dense-queries
 ```
 
-## Export submission TSV files
-
-To generate Codabench-ready `predictions_{lang}.tsv` files (columns: `index`, `preds`), run:
+Force Random Forest fusion retraining:
 
 ```bash
-uv run modal run -m clef_pipeline.main \
-  --split dev \
-  --export-submission-tsv \
-  --submission-volume-subdir submissions \
-  --submission-download-dir submissions
+uv run modal run -d -m clef_pipeline.main \
+  --fusion-method random_forest \
+  --force-retrain-fusion
 ```
 
-For competition export, switch to the unlabeled split:
+## Ablation Commands
+
+The following commands are useful for comparing retrieval and reranking stages.
+Run cache-building configurations first to avoid repeated dense embedding work.
+
+Vanilla BM25:
+
+```bash
+uv run modal run -d -m clef_pipeline.main \
+  --profile custom --dense-model "" --disable-reranker --sparse-vanilla \
+  --split dev --export-submission-tsv \
+  --metrics-output-file metrics_1_vanilla_bm25.json
+```
+
+Optimized sparse:
+
+```bash
+uv run modal run -d -m clef_pipeline.main \
+  --profile custom --dense-model "" --disable-reranker \
+  --split dev --export-submission-tsv \
+  --metrics-output-file metrics_2_optimized_sparse.json
+```
+
+BGE-M3 dense only:
+
+```bash
+uv run modal run -d -m clef_pipeline.main \
+  --profile custom --dense-model bge-m3 --disable-sparse --disable-reranker \
+  --split dev --export-submission-tsv \
+  --metrics-output-file metrics_3_bgem3_dense.json
+```
+
+Harrier 27B dense only:
+
+```bash
+uv run modal run -d -m clef_pipeline.main \
+  --profile custom --dense-model harrier-27b --disable-sparse --disable-reranker \
+  --split dev --export-submission-tsv \
+  --metrics-output-file metrics_4_harrier_dense.json
+```
+
+Hybrid RRF:
+
+```bash
+uv run modal run -d -m clef_pipeline.main \
+  --profile custom --dense-model harrier-27b --fusion-method rrf \
+  --disable-reranker --split dev --export-submission-tsv \
+  --metrics-output-file metrics_5_hybrid_rrf.json
+```
+
+Hybrid Random Forest:
+
+```bash
+uv run modal run -d -m clef_pipeline.main \
+  --profile custom --dense-model harrier-27b --fusion-method random_forest \
+  --disable-reranker --split dev --export-submission-tsv \
+  --metrics-output-file metrics_6_hybrid_rf.json
+```
+
+Hybrid with reranking:
+
+```bash
+uv run modal run -d -m clef_pipeline.main \
+  --profile custom --dense-model harrier-27b --fusion-method random_forest \
+  --reranker-model nemotron \
+  --split dev --export-submission-tsv \
+  --metrics-output-file metrics_7_hybrid_rf_nemotron.json
+```
+
+Swap `--fusion-method rrf` or `--reranker-model gemma2b`, `jina-v3`, or a Qwen
+registry name to run additional combinations.
+
+## Submission Export
+
+Generate final prediction files for the unlabeled competition split:
 
 ```bash
 uv run modal run -m clef_pipeline.main \
@@ -91,33 +246,13 @@ uv run modal run -m clef_pipeline.main \
   --submission-download-dir submissions
 ```
 
-The official `test` split does not include `pubkey`, so this mode is submission-only:
-the pipeline will generate predictions, but it will not compute local metrics or
-write a metrics JSON file.
-
-You can also run on `train` for debugging or analysis:
+At the end of the run, the CLI prints a `modal volume get` command similar to:
 
 ```bash
-uv run modal run -m clef_pipeline.main \
-  --split train \
-  --export-submission-tsv \
-  --submission-volume-subdir submissions \
-  --submission-download-dir submissions
+uv run modal volume get checkthat-embedding-cache /submissions/test-20260416-191700 submissions
 ```
 
-This writes one TSV per language (for example `predictions_en.tsv`, `predictions_de.tsv`, `predictions_fr.tsv`) into the Modal volume under:
-
-`/submissions/<split>-<timestamp>`
-
-At the end of the run, the command prints an exact download command you can run locally, for example:
-
-```bash
-uv run modal volume get checkthat-embedding-cache /submissions/dev-20260416-191700 submissions
-```
-
-## Prepare final `predictions.zip` for Codabench
-
-After exporting with `--split test` and downloading the folder, package the TSVs like this:
+Create the Codabench upload archive from the downloaded run directory:
 
 ```bash
 cd submissions/test-<timestamp>
@@ -126,52 +261,20 @@ zip -r predictions.zip predictions_*.tsv
 unzip -l predictions.zip
 ```
 
-Expected contents:
-- `predictions_en.tsv`
+Expected files are:
+
 - `predictions_de.tsv`
+- `predictions_en.tsv`
 - `predictions_fr.tsv`
 
-Upload `predictions.zip` to the Codabench competition page.
+Each TSV contains `index` and `preds`, where `preds` is a top-5 list of
+publication keys in descending rank order.
 
-## Current Stats on Dev
+## Resource Expectations
 
-Reported metrics (MRR@5, R@5, R@10, R@30) for the full pipeline on the dev set are as follows:
-
-| Language / Group | n Tweets | Dense (MRR@5 / R@5 / R@10 / R@30) | Sparse (MRR@5 / R@5 / R@10 / R@30) | RRF (MRR@5 / R@5 / R@10 / R@30) | Rerank (MRR@5 / R@5 / R@10 / R@30) |
-|------------------|----------|-----------------------------------|------------------------------------|---------------------------------|------------------------------------|
-| DE               | 386      | 0.5918 / 0.6891 / 0.7487 / 0.8394 | 0.4048 / 0.5000 / 0.5699 / 0.6477  | 0.5315 / - / - / 0.8109         | 0.6247 / 0.6995 / - / -            |
-| FR               | 702      | 0.7053 / 0.7977 / 0.8490 / 0.8832 | 0.5446 / 0.6154 / 0.6538 / 0.7336  | 0.6487 / - / - / 0.8604         | 0.7240 / 0.8077 / - / -            |
-| EN               | 3905     | 0.6946 / 0.7972 / 0.8371 / 0.8960 | 0.5388 / 0.6151 / 0.6553 / 0.7168  | 0.6271 / - / - / 0.8574         | 0.7332 / 0.8038 / - / -            |
-| GLOBAL AVERAGE   | 4993     | 0.6882 / 0.7889 / 0.8320 / 0.8898 | 0.5293 / 0.6062 / 0.6485 / 0.7138  | 0.6228 / - / - / 0.8542         | 0.7235 / 0.7963 / - / -            |
-
-Note: These numbers will need to be updated as we continue to refine the pipeline. The current results are based on the dev set, which we are treating as a validation set for iterative improvements. Dashing indicates metrics not logged for that specific pipeline stage.
-
-## Streamlit demo package
-
-The Streamlit app now lives in `src/clef_demo/` and imports the pipeline package.
-
-### Local Streamlit demo
-
-```bash
-uv sync
-uv run streamlit run src/clef_demo/clef_demo/streamlit_app.py
-```
-
-The demo:
-- indexes the full collection;
-- optionally merges custom JSON documents by `pubkey` (custom overrides base);
-- allows selecting one or more retrievers;
-- allows enabling/disabling fusion and reranking;
-- returns top-5 matches for a user tweet.
-
-### Host Streamlit demo on Modal
-
-```bash
-uv run modal serve -m clef_demo.modal_app
-```
-
-To deploy persistently:
-
-```bash
-uv run modal deploy -m clef_demo.modal_app
-```
+- `harrier-27b` and the larger rerankers require substantial GPU memory.
+- The default Modal evaluation function currently requests an H100.
+- The demo backend uses an A10G and is intended for interactive retrieval, not
+  full evaluation.
+- The first run for a model/split combination can be slow because it builds
+  caches; repeated runs should reuse the Modal volume.

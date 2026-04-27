@@ -294,6 +294,8 @@ class HarrierRetriever(BaseRetriever):
         """
         import os
 
+        from sentence_transformers import SentenceTransformer
+
         if cache_path and os.path.exists(cache_path) and not force_recompute:
             print(f"[cache hit] Loading {label} from {cache_path}")
             embs = self.torch.load(cache_path, map_location="cuda", weights_only=True)
@@ -309,10 +311,6 @@ class HarrierRetriever(BaseRetriever):
             )
 
         print(f"Encoding {len(texts)} {label}...")
-        from sentence_transformers import SentenceTransformer, util
-        self.model = SentenceTransformer(
-            self.model_name, device="cuda", model_kwargs={"dtype": "auto"}
-        )
         embs = self.model.encode(
             texts,
             convert_to_tensor=True,
@@ -548,7 +546,9 @@ class SparseRetriever(BaseRetriever):
         if not scores_dict:
             if top_k is None:
                 top_k = 0
-            return np.empty((top_k,), dtype=np.int32), np.zeros((top_k,), dtype=np.float32)
+            return np.empty((top_k,), dtype=np.int32), np.zeros(
+                (top_k,), dtype=np.float32
+            )
 
         if lang == "en" and self._term_graph is not None:
             expanded = self._diffusion_expand(tokenized_query, self._term_graph)
@@ -575,7 +575,7 @@ class SparseRetriever(BaseRetriever):
                     postings = self.bm25_model.index.get(term)
                     if not postings:
                         continue
-                    weight = (count / total)
+                    weight = count / total
                     for doc_id, _ in postings:
                         scores_dict[doc_id] += self.prf_weight * weight
 
@@ -719,8 +719,8 @@ class SparseRetriever(BaseRetriever):
                     continue
                 total = float(sum(neighbors.values())) + 1e-9
                 for neighbor, count in neighbors.most_common(int(self.diff_neighbors)):
-                    new_weights[neighbor] += weight * (count / total) * float(
-                        self.diffusion_decay
+                    new_weights[neighbor] += (
+                        weight * (count / total) * float(self.diffusion_decay)
                     )
             weights.update(new_weights)
 
@@ -751,7 +751,9 @@ class SparseRetriever(BaseRetriever):
         doc_ids = np.fromiter(scores_dict.keys(), dtype=np.int32)
         vals = np.fromiter(scores_dict.values(), dtype=np.float32)
         if len(vals) == 0:
-            return np.empty((top_k,), dtype=np.int32), np.zeros((top_k,), dtype=np.float32)
+            return np.empty((top_k,), dtype=np.int32), np.zeros(
+                (top_k,), dtype=np.float32
+            )
 
         k = min(top_k, len(vals))
         top_idx = np.argpartition(vals, -k)[-k:]
@@ -769,7 +771,9 @@ class SparseRetriever(BaseRetriever):
                     if len(filler) >= needed:
                         break
             if filler:
-                ranked_ids = np.concatenate([ranked_ids, np.asarray(filler, dtype=np.int32)])
+                ranked_ids = np.concatenate(
+                    [ranked_ids, np.asarray(filler, dtype=np.int32)]
+                )
                 ranked_scores = np.concatenate(
                     [ranked_scores, np.zeros((len(filler),), dtype=np.float32)]
                 )

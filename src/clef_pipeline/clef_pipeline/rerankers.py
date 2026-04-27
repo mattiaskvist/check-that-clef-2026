@@ -2,10 +2,11 @@
 
 import warnings
 
-warnings.filterwarnings("ignore", message=".*input_embeds.*", category=FutureWarning)
+from transformers import AutoModel
 
-from transformers import AutoModel, AutoModelForSequenceClassification
 from .interfaces import BaseReranker
+
+warnings.filterwarnings("ignore", message=".*input_embeds.*", category=FutureWarning)
 
 
 class Gemma2BReranker(BaseReranker):
@@ -277,18 +278,18 @@ class JinaReranker(BaseReranker):
         with self.torch.inference_mode():
             # Jina's rerank automatically sorts and returns a list of dictionaries
             jina_results = self.model.rerank(
-                query, 
-                [corpus[doc_id][:2048] for doc_id in doc_indices]
+                query, [corpus[doc_id][:2048] for doc_id in doc_indices]
             )
 
         results = []
         for res in jina_results:
             # Map the index returned by Jina back to our original document ID
-            orig_doc_id = doc_indices[res['index']]
-            score = float(res['relevance_score'])
+            orig_doc_id = doc_indices[res["index"]]
+            score = float(res["relevance_score"])
             results.append((orig_doc_id, score))
 
         return results
+
 
 class Qwen3Reranker(BaseReranker):
     """Qwen3-Reranker cross-encoder.
@@ -301,14 +302,12 @@ class Qwen3Reranker(BaseReranker):
     """
 
     _PREFIX = (
-        '<|im_start|>system\nJudge whether the Document meets the '
-        'requirements based on the Query and the Instruct provided. '
+        "<|im_start|>system\nJudge whether the Document meets the "
+        "requirements based on the Query and the Instruct provided. "
         'Note that the answer can only be "yes" or "no".<|im_end|>\n'
-        '<|im_start|>user\n'
+        "<|im_start|>user\n"
     )
-    _SUFFIX = (
-        "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
-    )
+    _SUFFIX = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
     _DEFAULT_INSTRUCTION = (
         "Given a scientific claim or social media post, retrieve the "
         "scientific paper that the claim refers to or is supported by."
@@ -374,11 +373,7 @@ class Qwen3Reranker(BaseReranker):
 
     def _format_pair(self, query: str, doc: str) -> str:
         """Apply the Qwen3 instruction template to a (query, doc) pair."""
-        return (
-            f"<Instruct>: {self.instruction}\n"
-            f"<Query>: {query}\n"
-            f"<Document>: {doc}"
-        )
+        return f"<Instruct>: {self.instruction}\n<Query>: {query}\n<Document>: {doc}"
 
     def _process_inputs(self, pairs: list[str]):
         """Tokenize pairs and splice the system/user/assistant scaffold."""
