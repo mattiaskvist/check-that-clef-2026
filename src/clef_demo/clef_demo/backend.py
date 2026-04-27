@@ -1,3 +1,4 @@
+from clef_pipeline.utils import read_custom_papers
 import modal
 
 app = modal.App("clef-backend")
@@ -38,7 +39,7 @@ embedding_cache = modal.Volume.from_name(
 )
 class PipelineBackend:
     @modal.method()
-    def load_cached_collection(self, selected_retrievers: list[str]):
+    def load_cached_collection(self, selected_retrievers: list[str], custom_papers: str | None = None,):
         from clef_pipeline.pipeline_config import (
             PipelineConfig,
             RerankerConfig,
@@ -59,13 +60,17 @@ class PipelineBackend:
             final_top_k=5,
         )
 
+        import os
         base_docs = load_dataset(
             CHECKTHAT_DATASET, "collection", split="collection"
         ).to_list()
+        if custom_papers:
+            custom_path = os.path.join("/cache/embeddings", custom_papers)
+            custom_docs = read_custom_papers(custom_path, 11000)
+            base_docs.extend(custom_docs)
         self.pipeline = build_pipeline_from_config(config)
         self.pipeline.index_collection(base_docs, cache_dir="/cache/embeddings")
 
-        import os
         import joblib
         
         fixed_path = "/cache/embeddings/hf_hub/models--boyes-boys-clef-2026--random-forest-fuser/snapshots/db30a2f44670a5bc6d81ff7f8c0e1b8719de20d9/rf_1d2c99cd554bfc4b.pkl"
