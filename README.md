@@ -35,8 +35,8 @@ expensive artifacts in Modal volumes.
 
 ## Results
 
-The table below shows the progression across the ablation configurations on the
-dev set, measured with MRR@5.
+The table below shows the progression across the 14 ablation configurations
+evaluated on the development set (MRR@5).
 
 To reproduce these runs, use the ablation commands in the
 [pipeline guide](src/clef_pipeline/README.md#ablation-commands).
@@ -45,18 +45,19 @@ To reproduce these runs, use the ablation commands in the
 |---:|---|---:|---:|---:|---:|
 | 0 | CheckThat! Baseline | 0.4987 | 0.3767 | 0.4584 | 0.4446 |
 | 1 | Vanilla BM25 Sparse Retriever | 0.4991 | 0.1973 | 0.2634 | 0.3199 |
-| 2 | Optimized Sparse Retriever | 0.5514 | 0.5052 | 0.5511 | 0.5008 |
-| 3 | BGE-M3 Dense Retriever Only | 0.5728 | 0.5044 | 0.5892 | 0.5555 |
-| 4 | Harrier 27B Dense Retriever Only | 0.6943 | 0.5892 | 0.7051 | 0.6628 |
-| 5 | Hybrid (Optimized Sparse + Harrier) + RRF Fusion | 0.6325 | 0.5103 | 0.6440 | 0.5956 |
-| 6 | Hybrid (Optimized Sparse + Harrier) + Random Forest Fusion | 0.7000 | 0.5937 | 0.7127 | 0.6688 |
-| 7 | Hybrid + Random Forest Fusion + Nemotron Reranker | 0.7391 | 0.6244 | 0.7343 | 0.6993 |
-| 8 | Hybrid + RRF Fusion + Nemotron Reranker | 0.7311 | 0.6166 | 0.7273 | 0.6917 |
-| 9 | Harrier 27B Dense Only + Nemotron Reranker | 0.7388 | 0.6190 | 0.7347 | 0.6975 |
-| **10** | **Hybrid + Random Forest Fusion + Qwen3 8B Reranker** | **0.7584** | **0.6943** | **0.7850** | **0.7459** |
-| 11 | Hybrid + RRF Fusion + Qwen3 8B Reranker | 0.7474 | 0.6896 | 0.7794 | 0.7388 |
-| 12 | Hybrid + Random Forest Fusion + Jina Reranker | 0.6952 | 0.6203 | 0.7026 | 0.6727 |
-| 13 | Hybrid + RRF Fusion + Jina Reranker | 0.6881 | 0.6089 | 0.6989 | 0.6653 |
+| 2 | Optimized Sparse Retriever | 0.5514 | 0.3987 | 0.5511 | 0.5004 |
+| 3 | BGE-M3 Dense Retriever | 0.5244 | 0.4129 | 0.5328 | 0.4900 |
+| 4 | Finetuned BGE-M3 Dense Retriever | 0.5728 | 0.5044 | 0.5892 | 0.5555 |
+| 5 | Harrier 27B Dense Retriever  | 0.6943 | 0.5892 | 0.7051 | 0.6628 |
+| 6 | Hybrid (Optimized Sparse + Harrier) + RRF Fusion | 0.6325 | 0.5103 | 0.6440 | 0.5956 |
+| 7 | Hybrid (Optimized Sparse + Harrier) + Random Forest Fusion | 0.7000 | 0.5937 | 0.7127 | 0.6688 |
+| 8 | Hybrid + Random Forest Fusion + Nemotron Reranker | 0.7391 | 0.6244 | 0.7343 | 0.6993 |
+| 9 | Hybrid + RRF Fusion + Nemotron Reranker | 0.7311 | 0.6166 | 0.7273 | 0.6917 |
+| 10 | Harrier 27B Dense + Nemotron Reranker | 0.7388 | 0.6190 | 0.7347 | 0.6975 |
+| **11** | **Hybrid + Random Forest Fusion + Qwen3 8B Reranker** | **0.7584** | **0.6943** | **0.7850** | **0.7459** |
+| 12 | Hybrid + RRF Fusion + Qwen3 8B Reranker | 0.7474 | 0.6896 | 0.7794 | 0.7388 |
+| 13 | Hybrid + Random Forest Fusion + Jina Reranker | 0.6952 | 0.6203 | 0.7026 | 0.6727 |
+| 14 | Hybrid + RRF Fusion + Jina Reranker | 0.6881 | 0.6089 | 0.6989 | 0.6653 |
 
 ## Setup
 
