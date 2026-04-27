@@ -356,7 +356,7 @@ def main():
 
         reranker_name = st.selectbox(
             "Reranker",
-            options=["none", "nemotron", "qwen3-reranker-8b"],
+            options=["none", "nemotron"],
             index=1,
         )
 
