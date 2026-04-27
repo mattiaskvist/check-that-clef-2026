@@ -77,15 +77,17 @@ def build_pipeline_config(
         if dense_model:
             retrievers.append(RetrieverConfig(name=dense_model))
         if not disable_sparse:
-            retrievers.append(RetrieverConfig(
-                name="sparse",
-                params={
-                    "k1": sparse_k1,
-                    "b": sparse_b,
-                    "use_bigrams": sparse_use_bigrams,
-                    "use_translation": sparse_use_translation,
-                }
-            ))
+            retrievers.append(
+                RetrieverConfig(
+                    name="sparse",
+                    params={
+                        "k1": sparse_k1,
+                        "b": sparse_b,
+                        "use_bigrams": sparse_use_bigrams,
+                        "use_translation": sparse_use_translation,
+                    },
+                )
+            )
 
         return PipelineConfig(
             retrievers=retrievers,

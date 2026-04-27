@@ -1,3 +1,5 @@
+"""Modal web-server wrapper for hosting the Streamlit demo."""
+
 import importlib.util
 import shlex
 import subprocess
@@ -11,6 +13,7 @@ image = modal.Image.debian_slim(python_version="3.11").pip_install("streamlit", 
 
 
 def _resolve_streamlit_script_path() -> str:
+    """Resolve the installed file path for ``clef_demo.streamlit_app``."""
     spec = importlib.util.find_spec("clef_demo.streamlit_app")
     if spec is None or spec.origin is None:
         raise RuntimeError("Unable to resolve module path for clef_demo.streamlit_app")
@@ -28,6 +31,7 @@ def _resolve_streamlit_script_path() -> str:
 # 502 Bad Gateway errors if Streamlit takes a moment to initialize.
 @modal.web_server(8501, startup_timeout=60)
 def serve_streamlit():
+    """Start Streamlit inside Modal and expose it as a web endpoint."""
     script_path = _resolve_streamlit_script_path()
 
     # Safely wrap the path in quotes in case there are spaces in your folder names

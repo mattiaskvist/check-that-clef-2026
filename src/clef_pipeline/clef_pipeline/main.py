@@ -31,7 +31,6 @@ image = (
         "torchvision",
         "deep-translator",
         "huggingface-hub <=	1.9.2",
-        
     )
 )
 
@@ -79,7 +78,9 @@ def _print_language_summary(
     )
 
 
-def _validate_metrics_output_request(split: str, metrics_output_file: str | None) -> None:
+def _validate_metrics_output_request(
+    split: str, metrics_output_file: str | None
+) -> None:
     """Reject metrics export for splits without labels."""
     if split == "test" and metrics_output_file:
         raise ValueError(
@@ -296,7 +297,9 @@ def evaluate_pipeline(
             f"  └─ Final Rerank:  MRR@5: {lang_metrics['final']['mrr5']:.4f} | R@5: {lang_metrics['final']['r5']:.4f}"
         )
 
-    print("\n================================================================================")
+    print(
+        "\n================================================================================"
+    )
     if summary["global"] is None:
         print(
             "[GLOBAL SUMMARY] - No labeled queries available; skipped metric "
@@ -323,7 +326,9 @@ def evaluate_pipeline(
         print(
             f"  └─ Overall Final:    MRR@5: {summary['global']['final']['mrr5']:.4f} | R@5: {summary['global']['final']['r5']:.4f}"
         )
-    print("================================================================================\n")
+    print(
+        "================================================================================\n"
+    )
     logger.info("Evaluation completed in %.2fs", timer.elapsed_seconds())
 
     submission_artifacts = None

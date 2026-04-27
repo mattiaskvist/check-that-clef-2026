@@ -1,202 +1,98 @@
-# check-that-clef-2026
+# CheckThat CLEF 2026 Source Retrieval
 
-## Quick start
+This repository contains the retrieval, evaluation, demo, and dense-retriever
+fine-tuning code for the CLEF 2026 CheckThat! Task 1 source retrieval work. The
+task is to retrieve the scientific publication implicitly referenced by a social
+media claim across English, German, and French queries.
+
+The project is organized as a Python `uv` workspace with three package-level
+entrypoints:
+
+- `src/clef_pipeline/` contains the Modal-backed retrieval and evaluation
+  pipeline.
+- `src/clef_demo/` contains the Streamlit demo and its Modal backend.
+- `src/clef_training/` contains hard-negative mining and BGE-M3 LoRA
+  fine-tuning scripts.
+
+## Architecture
+
+The production path is Modal-backed because the heavier retrievers and rerankers
+need GPU resources and persistent caches.
+
+- Dense retrieval supports Harrier and fine-tuned BGE-M3 variants.
+- Sparse retrieval uses BM25-style lexical retrieval with optional bigrams and
+  translation support.
+- Fusion supports reciprocal rank fusion (`rrf`) and a learned Random Forest
+  fuser (`random_forest`).
+- Reranking supports Nemotron, Gemma, Jina, and Qwen registry names.
+- Submission export writes Codabench-ready `predictions_{lang}.tsv` files.
+
+The pipeline reads the public Hugging Face dataset
+`sschellhammer/CT26_Task1_SourceRetrievalForScientificWebClaims` and caches
+expensive artifacts in Modal volumes.
+
+![Retrieval architecture](docs/assets/retrieval-architecture.jpg)
+
+## Results
+
+The table below shows the progression across the ablation configurations on the
+dev set, measured with MRR@5.
+
+To reproduce these runs, use the ablation commands in the
+[pipeline guide](src/clef_pipeline/README.md#ablation-commands).
+
+| # | Model Configuration | English | German | French | Avg. |
+|---:|---|---:|---:|---:|---:|
+| 0 | CheckThat! Baseline | 0.4987 | 0.3767 | 0.4584 | 0.4446 |
+| 1 | Vanilla BM25 Sparse Retriever | 0.4991 | 0.1973 | 0.2634 | 0.3199 |
+| 2 | Optimized Sparse Retriever | 0.5514 | 0.5052 | 0.5511 | 0.5008 |
+| 3 | BGE-M3 Dense Retriever Only | 0.5728 | 0.5044 | 0.5892 | 0.5555 |
+| 4 | Harrier 27B Dense Retriever Only | 0.6943 | 0.5892 | 0.7051 | 0.6628 |
+| 5 | Hybrid (Optimized Sparse + Harrier) + RRF Fusion | 0.6325 | 0.5103 | 0.6440 | 0.5956 |
+| 6 | Hybrid (Optimized Sparse + Harrier) + Random Forest Fusion | 0.7000 | 0.5937 | 0.7127 | 0.6688 |
+| 7 | Hybrid + Random Forest Fusion + Nemotron Reranker | 0.7391 | 0.6244 | 0.7343 | 0.6993 |
+| 8 | Hybrid + RRF Fusion + Nemotron Reranker | 0.7311 | 0.6166 | 0.7273 | 0.6917 |
+| 9 | Harrier 27B Dense Only + Nemotron Reranker | 0.7388 | 0.6190 | 0.7347 | 0.6975 |
+| **10** | **Hybrid + Random Forest Fusion + Qwen3 8B Reranker** | **0.7584** | **0.6943** | **0.7850** | **0.7459** |
+| 11 | Hybrid + RRF Fusion + Qwen3 8B Reranker | 0.7474 | 0.6896 | 0.7794 | 0.7388 |
+| 12 | Hybrid + Random Forest Fusion + Jina Reranker | 0.6952 | 0.6203 | 0.7026 | 0.6727 |
+| 13 | Hybrid + RRF Fusion + Jina Reranker | 0.6881 | 0.6089 | 0.6989 | 0.6653 |
+
+## Setup
+
+Install `uv`, sync the workspace, and authenticate required services:
 
 ```bash
 brew install uv
 uv sync
 
-# Run evaluation pipeline
-uv run python -m clef_pipeline.main
+# Modal account setup
+uv run modal setup
 
-# Deploy Modal backend used by the Streamlit demo
-uv run modal deploy src/clef_demo/clef_demo/backend.py
-
-# Run Streamlit demo locally (uses the deployed Modal backend)
-uv run streamlit run src/clef_demo/clef_demo/streamlit_app.py
-
-# To add or remove dependencies, use the following commands:
-uv add <dependency>
-uv remove <dependency>
-
-# To run formatting and linting checks, use:
-uv run ruff format
-uv run ruff check
-
-# Authenticate with HuggingFace
-uv run hf auth login
+# Hugging Face token for gated/private model access inside Modal
+uv run modal secret create hf-token HF_TOKEN=hf_XXXXXXXXXXXXXXXXXXXXXXXXXXXX
 ```
 
-## Code Layout
+You also need access to the configured Hugging Face model repositories used by
+the selected retriever/reranker profile.
 
-- `src/clef_pipeline/` — packaged retrieval/evaluation system (Modal entrypoint + retrieval stack)
-  - `src/clef_pipeline/clef_pipeline/main.py` — Modal app and local entrypoint for multilingual evaluation and optional submission export
-  - `src/clef_pipeline/clef_pipeline/pipeline.py` — orchestration layer for indexing, candidate generation, RRF fusion, and reranking
-  - `src/clef_pipeline/clef_pipeline/pipeline_config.py` — dataclass config model and preset profiles (`demo`, `evaluation`, `retrieval-only`)
-  - `src/clef_pipeline/clef_pipeline/registry.py` — component factories that build retrievers/rerankers and assemble the pipeline
-  - `src/clef_pipeline/clef_pipeline/retrievers.py` — dense retrievers (BGE-M3, Harrier) and sparse BM25+ retriever with cache support
-  - `src/clef_pipeline/clef_pipeline/rerankers.py` — cross-encoder rerankers (Gemma and Nemotron variants)
-  - `src/clef_pipeline/clef_pipeline/metrics.py` — per-language and global aggregation for MRR/Recall metrics
-  - `src/clef_pipeline/clef_pipeline/submission.py` — TSV submission file writing and Modal volume download command helpers
-  - `src/clef_pipeline/clef_pipeline/interfaces.py` — abstract contracts for retrievers and rerankers
-  - `src/clef_pipeline/clef_pipeline/logging_utils.py` — logger setup and simple stage timer utility
-  - `src/clef_pipeline/clef_pipeline/utils.py` — constants, ranking helpers, and reciprocal-rank-fusion utility
-- `src/clef_demo/` — Streamlit demo package with Modal backend and web app deployment entrypoints
-- `src/clef_training/` — training and hard-negative-mining scripts for dense retrieval model development
-- `tests/` — regression and modular pipeline tests for retrieval, metrics, configs, and demo integration
+## Common Commands
 
-## Configuration Profiles
+Run the default Modal evaluation pipeline:
 
-The pipeline uses preset profiles defined in `src/clef_pipeline/clef_pipeline/pipeline_config.py` to specify combinations of retrievers, rerankers, and fusion strategies. You can switch or customize these to experiment with different models.
+```bash
+uv run modal run -d -m clef_pipeline.main
+```
 
-### Built-in Profiles
+Run a lightweight retrieval-only evaluation:
 
-- `demo`: Lightweight profile using a small dense retriever (`harrier-270m`), a sparse retriever (`sparse`), and the `nemotron` reranker. Recommended for fast local testing.
-- `evaluation`: Heavyweight profile using a large dense retriever (`harrier-27b`), a sparse retriever (`sparse`), and the `nemotron` reranker.
-- `retrieval-only`: Uses `harrier-270m` and `sparse`, but completely disables the cross-encoder reranking step.
-
-### Customizing Components
-
-To change components, edit the list of `RetrieverConfig` or `RerankerConfig` within `build_pipeline_config()` in `pipeline_config.py`. 
-You can mix and match the available models:
-- **Retrievers:** `harrier-270m`, `harrier-27b`, `bge-m3`, `sparse`
-- **Rerankers:** `nemotron`, `gemma2b`, `jina-v3`
-- **Fusion Methods:** `rrf` (Reciprocal Rank Fusion), `random_forest` (Learned RF Classifier)
-
-## Ablation Study
-
-Run the following commands to execute the ablation study and collect the metrics/submission files for each combination. The metrics are saved to local JSON files (`metrics_X.json`) and submission files will be generated in the Modal volume and instructions to download them will be printed.
-
-### Recommended Execution Order (for maximum caching)
-
-The Random Forest fuser trains automatically the first time it is needed and saves to the Modal volume. To avoid recomputing dense document and query embeddings multiple times, run the commands in this order:
-
-1. **Run Command 5 (Hybrid RRF)**: Builds the massive `harrier-27b` document embeddings, the `harrier-27b` dev queries, and the optimized `sparse` dev queries.
-2. **Run Command 6 (Hybrid RF)**: Hits the document cache from Command 5. Automatically computes the `train` queries for `harrier-27b` and `sparse`, trains the Random Forest model, saves it to the cache, and evaluates.
-3. **Run Commands 7, 8, 9, 10, 11, 12, 13, 2, and 4**: These will now completely hit the caches built in steps 1 and 2, running lightning fast and only spending time on reranking where applicable.
-4. **Run Command 1 (Vanilla BM25)**: Computes a new sparse cache for the `dev` queries using vanilla BM25 parameters.
-5. **Run Command 3 (BGE-M3)**: Computes the `bge-m3` document and dev query embeddings from scratch.
-
-*(Note: If you ever need to explicitly force the random forest model to retrain, simply append `--force-retrain-fusion` to the relevant command).*
-
-### 1. Vanilla BM25 Sparse Retriever
 ```bash
 uv run modal run -d -m clef_pipeline.main \
-  --profile custom --dense-model "" --disable-reranker --sparse-vanilla \
-  --split dev --export-submission-tsv --metrics-output-file metrics_1_vanilla_bm25.json
+  --profile retrieval-only \
+  --disable-reranker
 ```
 
-### 2. Optimized Sparse Retriever
-```bash
-uv run modal run -d -m clef_pipeline.main \
-  --profile custom --dense-model "" --disable-reranker \
-  --split dev --export-submission-tsv --metrics-output-file metrics_2_optimized_sparse.json
-```
-
-### 3. BGE-M3 Dense Retriever Only
-```bash
-uv run modal run -d -m clef_pipeline.main \
-  --profile custom --dense-model "bge-m3" --disable-sparse --disable-reranker \
-  --split dev --export-submission-tsv --metrics-output-file metrics_3_bgem3_dense.json
-```
-
-### 4. Harrier 27B Dense Retriever Only
-```bash
-uv run modal run -d -m clef_pipeline.main \
-  --profile custom --dense-model "harrier-27b" --disable-sparse --disable-reranker \
-  --split dev --export-submission-tsv --metrics-output-file metrics_4_harrier_dense.json
-```
-
-### 5. Hybrid (Optimized Sparse + Harrier) + RRF Fusion
-```bash
-uv run modal run -d -m clef_pipeline.main \
-  --profile custom --dense-model "harrier-27b" --fusion-method "rrf" --disable-reranker \
-  --split dev --export-submission-tsv --metrics-output-file metrics_5_hybrid_rrf.json
-```
-
-### 6. Hybrid (Optimized Sparse + Harrier) + Random Forest Fusion
-```bash
-uv run modal run -d -m clef_pipeline.main \
-  --profile custom --dense-model "harrier-27b" --fusion-method "random_forest" --disable-reranker \
-  --split dev --export-submission-tsv --metrics-output-file metrics_6_hybrid_rf.json
-```
-
-### 7. Hybrid + Random Forest Fusion + Nemotron Reranker
-```bash
-uv run modal run -d -m clef_pipeline.main \
-  --profile custom --dense-model "harrier-27b" --fusion-method "random_forest" \
-  --split dev --export-submission-tsv --metrics-output-file metrics_7_hybrid_rf_nemotron.json
-```
-
-### 8. Hybrid + RRF Fusion + Nemotron Reranker
-```bash
-uv run modal run -d -m clef_pipeline.main \
-  --profile custom --dense-model "harrier-27b" --fusion-method "rrf" \
-  --split dev --export-submission-tsv --metrics-output-file metrics_8_hybrid_rrf_nemotron.json
-```
-
-### 9. Harrier 27B Dense Only + Nemotron Reranker
-```bash
-uv run modal run -d -m clef_pipeline.main \
-  --profile custom --dense-model "harrier-27b" --disable-sparse \
-  --split dev --export-submission-tsv --metrics-output-file metrics_9_harrier_nemotron.json
-```
-
-### 10. Hybrid + Random Forest Fusion + Gemma Reranker
-```bash
-uv run modal run -d -m clef_pipeline.main \
-  --profile custom --dense-model "harrier-27b" --fusion-method "random_forest" --reranker-model "gemma2b" \
-  --split dev --export-submission-tsv --metrics-output-file metrics_10_hybrid_rf_gemma.json
-```
-
-### 11. Hybrid + RRF Fusion + Gemma Reranker
-```bash
-uv run modal run -d -m clef_pipeline.main \
-  --profile custom --dense-model "harrier-27b" --fusion-method "rrf" --reranker-model "gemma2b" \
-  --split dev --export-submission-tsv --metrics-output-file metrics_11_hybrid_rrf_gemma.json
-```
-
-### 12. Hybrid + Random Forest Fusion + Jina Reranker
-```bash
-uv run modal run -d -m clef_pipeline.main \
-  --profile custom --dense-model "harrier-27b" --fusion-method "random_forest" --reranker-model "jina-v3" \
-  --split dev --export-submission-tsv --metrics-output-file metrics_12_hybrid_rf_jina.json
-```
-
-### 13. Hybrid + RRF Fusion + Jina Reranker
-```bash
-uv run modal run -d -m clef_pipeline.main \
-  --profile custom --dense-model "harrier-27b" --fusion-method "rrf" --reranker-model "jina-v3" \
-  --split dev --export-submission-tsv --metrics-output-file metrics_13_hybrid_rrf_jina.json
-```
-
-## Modal commands
-
-```bash
-# Evaluation pipeline
-uv run modal run -m clef_pipeline.main --split dev
-
-# Deploy Streamlit demo on Modal
-uv run modal deploy src/clef_demo/clef_demo/modal_app.py
-
-# Streamlit demo on Modal (live-reload dev mode)
-uv run modal serve -m clef_demo.modal_app
-
-# Deploy backend used by the Streamlit demo
-uv run modal deploy src/clef_demo/clef_demo/backend.py
-
-# Stop deployed demo apps
-uv run modal stop-app clef-backend
-uv run modal stop-app checkthat-streamlit-demo
-```
-
-## Submission Guidelines
-
-https://www.codabench.org/competitions/15611/#/pages-tab
-
-### Prepare files for upload
-
-1. Generate predictions for the competition split:
+Generate competition submission TSV files:
 
 ```bash
 uv run modal run -m clef_pipeline.main \
@@ -206,31 +102,56 @@ uv run modal run -m clef_pipeline.main \
   --submission-download-dir submissions
 ```
 
-The official `test` split is unlabeled and has no `pubkey` column, so this run
-can produce submission TSVs but cannot compute local evaluation metrics.
-
-2. Move into the downloaded run directory (`submissions/test-<timestamp>`) and validate expected files:
+Deploy the demo backend and serve the Streamlit app:
 
 ```bash
-cd submissions/test-<timestamp>
-ls predictions_*.tsv
+uv run modal deploy src/clef_demo/clef_demo/backend.py
+uv run modal serve -m clef_demo.modal_app
 ```
 
-3. Create the upload archive:
+Run local development checks:
 
 ```bash
-zip -r predictions.zip predictions_*.tsv
-unzip -l predictions.zip
+uv run ruff format
+uv run ruff check
+uv run pytest
 ```
 
-Upload `predictions.zip` to Codabench.
+Some tests or workflows can import model-heavy packages. Full evaluation,
+deployment, and training require Modal and are not expected to run as part of a
+lightweight local smoke check.
 
-Each team must create only one account in CodaBench and submit their predictions exclusively through that account.
-Make sure your account name matches that used during CLEF registration.
-The last valid submission will be considered as the final submission!
-The submission file predictions.zip must include your predictions.
-Inside the predictions.zip file include .tsv files (TSV, not CSV) for language-specific predictions.
-The .tsv files must be named predictions_{lang}.tsv where {lang} is either en, de, or fr.
-The predictions.zip file must include the prediction .tsv files for the languages you want to participate in.
-The predictions_{lang}.tsv must contain the following columns: "index", "preds", where "index" is the index of the post and "preds" contains an array of the top5 predicted pubkeys (in descending order: [pred1, pred2, pred3, pred4, pred5], where pred1 is the pubkey of the highest ranked publication from the collection set)
-You are allowed to submit max 50 submissions per day per team.
+## Documentation
+
+- [Pipeline guide](src/clef_pipeline/README.md) covers evaluation, profiles,
+  caching, ablations, and Codabench export.
+- [Demo guide](src/clef_demo/README.md) covers the Streamlit UI and Modal demo
+  deployment.
+- [BGE fine-tuning guide](src/clef_training/README.md) covers hard-negative
+  mining, Modal training, and model download.
+
+## Repository Layout
+
+```text
+.
+├── src/
+│   ├── clef_pipeline/   # Retrieval, fusion, reranking, metrics, submissions
+│   ├── clef_demo/       # Streamlit app and Modal web/backend apps
+│   ├── clef_training/   # Hard-negative mining and BGE-M3 LoRA training
+├── scripts/             # Analysis and supporting data collection utilities
+├── tests/               # Unit and regression tests
+├── pyproject.toml       # Workspace metadata and dependencies
+├── uv.lock              # Locked dependency graph
+└── LICENSE              # MIT license
+```
+
+## Publication Notes
+
+- Do not commit local `.env` files, downloaded submissions, model checkpoints,
+  embedding caches, or Modal volume contents.
+- The official `test` split is unlabeled; it can generate submissions but cannot
+  produce local metrics.
+- The default heavy profile uses large GPU models. Prefer the documented demo or
+  retrieval-only profiles for quick iteration.
+- The code is released under the MIT license. Dataset and model usage are
+  governed by their upstream licenses and access policies.

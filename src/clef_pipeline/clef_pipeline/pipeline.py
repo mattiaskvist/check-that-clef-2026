@@ -179,7 +179,9 @@ class RetrievalPipeline:
         This is used to swap inference-only settings (fusion method, reranker)
         while reusing the already-loaded document collection and retriever state.
         """
-        pipeline = cls(config=config, retrievers=dict(base.retrievers), reranker=reranker)
+        pipeline = cls(
+            config=config, retrievers=dict(base.retrievers), reranker=reranker
+        )
         pipeline.collection_documents = base.collection_documents
         pipeline.article_pubkeys = base.article_pubkeys
         if pipeline.reranker is not None:
