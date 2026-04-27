@@ -35,7 +35,7 @@ embedding_cache = modal.Volume.from_name(
     ),  # 15 mins max runtime to avoid unexpected long-running costs
     volumes={"/cache/embeddings": embedding_cache},
     secrets=[modal.Secret.from_name("hf-token")],
-    scaledown_window=150,  # Keeps GPU alive for 2.5 mins
+    scaledown_window=300,  # Keeps GPU alive for 2.5 mins
 )
 class PipelineBackend:
     @modal.method()
