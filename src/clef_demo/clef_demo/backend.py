@@ -49,11 +49,13 @@ class PipelineBackend:
         from clef_pipeline.utils import CHECKTHAT_DATASET
         from datasets import load_dataset
 
+        fusion_method = "random_forest" if "harrier-270m" in selected_retrievers else "rrf" 
+
         config = PipelineConfig(
             retrievers=[RetrieverConfig(name=name) for name in selected_retrievers],
             reranker=RerankerConfig(name=None, enabled=False),
             use_fusion=True,
-            fusion_method="rrf",
+            fusion_method=fusion_method,
             hf_fusion_repo_id="boyes-boys-clef-2026/random-forest-fuser",
             fusion_top_k=30,
             sparse_cache_top_k=2000,
@@ -90,7 +92,7 @@ class PipelineBackend:
             self.pipeline.prepare_fusion_model(
                 cache_dir="/cache/embeddings",
                 languages=["en", "fr", "de"],
-                force_retrain_fusion=False
+                force_retrain_fusion=False,
             )
 
         # only grab the first 5 documents to send back as a preview
