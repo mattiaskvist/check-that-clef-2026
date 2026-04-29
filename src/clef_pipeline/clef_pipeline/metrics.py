@@ -7,35 +7,49 @@ from collections import defaultdict
 from .utils import MRR_at_5, recall_at_K
 
 
-def _new_stage_buckets(fusion_top_k: int) -> dict[str, dict[str, list[float]]]:
+def _new_stage_buckets(
+    fusion_top_k: int, recall_cutoffs: list[int]
+) -> dict[str, dict[str, list[float]]]:
     """Create empty metric buckets for each pipeline stage.
 
     Args:
         fusion_top_k: Cutoff used for the RRF recall metric key.
+        recall_cutoffs: Recall cutoffs to track for each stage.
 
     Returns:
         Nested dict of metric lists keyed by stage and metric name.
     """
+    recall_keys = [f"r{k}" for k in recall_cutoffs]
     return {
-        "dense": {m: [] for m in ["mrr5", "r5", "r10", "r30", "r50"]},
-        "sparse": {m: [] for m in ["mrr5", "r5", "r10", "r30", "r50"]},
-        "rrf": {"mrr5": [], f"r{fusion_top_k}": []},
-        "final": {"mrr5": [], "r5": []},
+        "dense": {m: [] for m in (["mrr5"] + recall_keys)},
+        "sparse": {m: [] for m in (["mrr5"] + recall_keys)},
+        "rrf": {m: [] for m in (["mrr5"] + recall_keys)},
+        "final": {m: [] for m in (["mrr5"] + recall_keys)},
     }
 
 
 class EvaluationMetrics:
     """Collect per-query metrics and produce language/global summaries."""
 
-    def __init__(self, fusion_top_k: int = 30):
+    def __init__(self, fusion_top_k: int = 30, recall_cutoffs: list[int] | None = None):
         """Initialize empty accumulators.
 
         Args:
             fusion_top_k: Cutoff used for RRF recall in reporting.
+            recall_cutoffs: Recall cutoffs to track. Defaults to
+                ``[3, 5] + list(range(10, 501, 10))``.
         """
+        if recall_cutoffs is None:
+            recall_cutoffs = [3, 5] + list(range(10, 501, 10))
+        if not recall_cutoffs:
+            raise ValueError("recall_cutoffs must not be empty")
+        if any(k <= 0 for k in recall_cutoffs):
+            raise ValueError("recall_cutoffs must be positive integers")
+
         self.fusion_top_k = fusion_top_k
+        self.recall_cutoffs = sorted(set(int(k) for k in recall_cutoffs))
         self._by_language: dict[str, dict[str, dict[str, list[float]]]] = defaultdict(
-            lambda: _new_stage_buckets(self.fusion_top_k)
+            lambda: _new_stage_buckets(self.fusion_top_k, self.recall_cutoffs)
         )
         self._counts: dict[str, int] = defaultdict(int)
         self._labeled_counts: dict[str, int] = defaultdict(int)
@@ -59,23 +73,11 @@ class EvaluationMetrics:
         self._labeled_counts[lang] += 1
 
         buckets = self._by_language[lang]
-        for stage_name in ("dense", "sparse"):
+        for stage_name in ("dense", "sparse", "rrf", "final"):
             preds = stages.get(stage_name, [])
             buckets[stage_name]["mrr5"].append(MRR_at_5(preds, true_pubkey))
-            buckets[stage_name]["r5"].append(recall_at_K(preds, true_pubkey, 5))
-            buckets[stage_name]["r10"].append(recall_at_K(preds, true_pubkey, 10))
-            buckets[stage_name]["r30"].append(recall_at_K(preds, true_pubkey, 30))
-            buckets[stage_name]["r50"].append(recall_at_K(preds, true_pubkey, 50))
-
-        rrf_preds = stages.get("rrf", [])
-        buckets["rrf"]["mrr5"].append(MRR_at_5(rrf_preds, true_pubkey))
-        buckets["rrf"][f"r{self.fusion_top_k}"].append(
-            recall_at_K(rrf_preds, true_pubkey, self.fusion_top_k)
-        )
-
-        final_preds = stages.get("final", [])
-        buckets["final"]["mrr5"].append(MRR_at_5(final_preds, true_pubkey))
-        buckets["final"]["r5"].append(recall_at_K(final_preds, true_pubkey, 5))
+            for k in self.recall_cutoffs:
+                buckets[stage_name][f"r{k}"].append(recall_at_K(preds, true_pubkey, k))
 
     @staticmethod
     def _safe_average(values: list[float]) -> float:
@@ -122,7 +124,7 @@ class EvaluationMetrics:
             lang: self._summarize_language(lang) for lang in sorted(self._counts)
         }
 
-        global_totals = _new_stage_buckets(self.fusion_top_k)
+        global_totals = _new_stage_buckets(self.fusion_top_k, self.recall_cutoffs)
         total_queries = 0
         total_labeled_queries = 0
         for lang, data in language_summary.items():
@@ -150,4 +152,5 @@ class EvaluationMetrics:
             "total_queries": total_queries,
             "total_labeled_queries": total_labeled_queries,
             "total_unlabeled_queries": total_queries - total_labeled_queries,
+            "recall_cutoffs": self.recall_cutoffs,
         }
