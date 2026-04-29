@@ -13,7 +13,7 @@ from .submission import (
     submission_volume_remote_dir,
     write_submission_tsv_files,
 )
-from .utils import CHECKTHAT_DATASET, load_query_split, read_custom_papers
+from .utils import CHECKTHAT_DATASET, _print_all_recalls, _write_recall_log, load_query_split, read_custom_papers
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
@@ -378,6 +378,8 @@ def main(
     disable_reranker: bool = False,
     sparse_vanilla: bool = False,
     metrics_output_file: str | None = None,
+    recall_log_file: str | None = None,
+    print_all_recalls: bool = False,
     custom_papers: str | None = None,
 ):
     """Local CLI entrypoint that dispatches Modal evaluation and export.
@@ -421,6 +423,54 @@ def main(
         with open(metrics_output_file, "w") as f:
             json.dump(run_output["global_results"], f, indent=2)
         print(f"Saved metrics to {metrics_output_file}")
+
+    if recall_log_file or print_all_recalls:
+        # Recompute the full summary locally from the per-language averages returned
+        # by the Modal run.
+        # NOTE: The modal function prints language and global summaries already; this
+        # export is only to persist the full recall curve payload.
+        summary = {
+            "languages": run_output["global_results"],
+            "global": None,
+            "total_queries": 0,
+            "total_labeled_queries": 0,
+            "total_unlabeled_queries": 0,
+            "recall_cutoffs": [3, 5] + list(range(10, 501, 10)),
+        }
+        # Best-effort: synthesize global by averaging language averages.
+        languages = list(run_output["global_results"].keys())
+        global_totals: dict[str, dict[str, list[float]]] = {}
+        for lang in languages:
+            data = run_output["global_results"][lang]
+            summary["total_queries"] += data.get("Total Queries", 0)
+            summary["total_labeled_queries"] += data.get("Labeled Queries", 0)
+            summary["total_unlabeled_queries"] += data.get("Unlabeled Queries", 0)
+            metrics = data.get("metrics")
+            if metrics is None:
+                continue
+            for stage_name, stage_metrics in metrics.items():
+                stage_bucket = global_totals.setdefault(
+                    stage_name, {k: [] for k in stage_metrics}
+                )
+                for metric_name, value in stage_metrics.items():
+                    stage_bucket.setdefault(metric_name, []).append(value)
+        if global_totals:
+            summary["global"] = {
+                stage_name: {
+                    metric_name: (
+                        sum(values) / len(values) if values else 0.0
+                    )
+                    for metric_name, values in stage_metrics.items()
+                }
+                for stage_name, stage_metrics in global_totals.items()
+            }
+
+        fusion_label = "RF Fusion" if fusion_method == "random_forest" else "RRF"
+        if recall_log_file:
+            _write_recall_log(recall_log_file, summary=summary, fusion_label=fusion_label)
+            print(f"Saved recall log to {recall_log_file}")
+        if print_all_recalls:
+            _print_all_recalls(summary, fusion_label=fusion_label)
 
     if export_submission_tsv:
         submission_artifacts = run_output["submission_artifacts"]
