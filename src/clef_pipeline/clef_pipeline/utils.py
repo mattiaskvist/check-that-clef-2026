@@ -124,3 +124,43 @@ def read_custom_papers(file_path: str, start_id: int = 11000) -> list[dict]:
             )
 
     return documents
+
+def _write_recall_log(
+    output_file: str,
+    *,
+    summary: dict[str, object],
+    fusion_label: str,
+) -> None:
+    import json
+
+    payload = {
+        "fusion_label": fusion_label,
+        "recall_cutoffs": summary.get("recall_cutoffs", []),
+        "languages": summary.get("languages", {}),
+        "global": summary.get("global", None),
+        "total_queries": summary.get("total_queries", 0),
+        "total_labeled_queries": summary.get("total_labeled_queries", 0),
+        "total_unlabeled_queries": summary.get("total_unlabeled_queries", 0),
+    }
+    with open(output_file, "w") as f:
+        json.dump(payload, f, indent=2)
+
+
+def _print_all_recalls(summary: dict[str, object], *, fusion_label: str) -> None:
+    cutoffs = summary.get("recall_cutoffs") or []
+    global_metrics = summary.get("global")
+    if not cutoffs or global_metrics is None:
+        return
+
+    print("\n" + "=" * 80)
+    print("ALL RECALLS (GLOBAL AVERAGE)")
+    print("=" * 80)
+    for k in cutoffs:
+        key = f"r{k}"
+        dense = global_metrics["dense"].get(key, 0.0)
+        sparse = global_metrics["sparse"].get(key, 0.0)
+        fused = global_metrics["rrf"].get(key, 0.0)
+        final = global_metrics["final"].get(key, 0.0)
+        print(
+            f"R@{k:<3} | Dense: {dense:.4f} | Sparse: {sparse:.4f} | {fusion_label}: {fused:.4f} | Final: {final:.4f}"
+        )
