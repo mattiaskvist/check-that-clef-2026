@@ -138,6 +138,7 @@ def evaluate_pipeline(
     disable_reranker: bool = False,
     sparse_vanilla: bool = False,
     custom_papers: str | None = None,
+    languages: list[str] | None = None,
 ):
     """Run the full retrieval evaluation workflow on Modal.
 
@@ -203,7 +204,7 @@ def evaluate_pipeline(
     )
     embedding_cache.commit()
 
-    languages = ["de", "fr", "en"]
+    languages = languages or ["de", "fr", "en"]
     lang_tweets: dict[str, list[dict]] = {}
     cache_langs = {lang: f"{split}_{lang}" for lang in languages}
     for lang in languages:
@@ -376,6 +377,7 @@ def main(
     sparse_vanilla: bool = False,
     metrics_output_file: str | None = None,
     custom_papers: str | None = None,
+    languages: str = "de,fr,en",
 ):
     """Local CLI entrypoint that dispatches Modal evaluation and export.
 
@@ -409,6 +411,7 @@ def main(
         disable_reranker=disable_reranker,
         sparse_vanilla=sparse_vanilla,
         custom_papers=custom_papers,
+        languages=[lang.strip() for lang in languages.split(",") if lang.strip()],
     )
 
     if metrics_output_file:
