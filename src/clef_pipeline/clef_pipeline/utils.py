@@ -125,6 +125,84 @@ def read_custom_papers(file_path: str, start_id: int = 11000) -> list[dict]:
 
     return documents
 
+
+def translate_de_tweets_to_fr(texts: list[str]) -> list[str]:
+    """Translate German tweet/query texts into French.
+
+    Notes:
+        - Intended for query preprocessing only (tweets), not for collection articles.
+        - Uses ``deep_translator`` backends which may require network access.
+        - On any translation failure, returns the original texts unchanged.
+    """
+    if not texts:
+        return []
+    try:
+        from deep_translator import GoogleTranslator
+
+        translator = GoogleTranslator(source="de", target="fr")
+        translate_batch = getattr(translator, "translate_batch", None)
+        if callable(translate_batch):
+            translated = translate_batch(texts)
+        else:
+            translated = [translator.translate(text) for text in texts]
+        return [t if isinstance(t, str) and t else s for s, t in zip(texts, translated)]
+    except Exception:
+        return list(texts)
+
+
+def translate_de_articles_to_fr(docs: list[dict]) -> list[dict]:
+    """Translate German collection documents (title/abstract) into French.
+
+    Only documents explicitly tagged as German are translated. This function
+    expects language metadata to be present (e.g. ``lang`` or ``language``).
+
+    Translation is best-effort: on any failure, the original documents are
+    returned unchanged.
+    """
+    if not docs:
+        return []
+
+    indices: list[int] = []
+    titles: list[str] = []
+    abstracts: list[str] = []
+    for i, doc in enumerate(docs):
+        lang = str(doc.get("lang") or doc.get("language") or "").lower().strip()
+        if not (lang == "de" or lang.startswith("de-")):
+            continue
+        indices.append(i)
+        titles.append(str(doc.get("title") or ""))
+        abstracts.append(str(doc.get("abstract") or ""))
+
+    if not indices:
+        return list(docs)
+
+    try:
+        from deep_translator import GoogleTranslator
+
+        translator = GoogleTranslator(source="de", target="fr")
+        translate_batch = getattr(translator, "translate_batch", None)
+        if callable(translate_batch):
+            titles_fr = translate_batch(titles)
+            abstracts_fr = translate_batch(abstracts)
+        else:
+            titles_fr = [translator.translate(text) for text in titles]
+            abstracts_fr = [translator.translate(text) for text in abstracts]
+
+        updated = [dict(doc) for doc in docs]
+        for pos, idx in enumerate(indices):
+            title_fr = titles_fr[pos] if isinstance(titles_fr[pos], str) else titles[pos]
+            abstract_fr = (
+                abstracts_fr[pos]
+                if isinstance(abstracts_fr[pos], str)
+                else abstracts[pos]
+            )
+            updated[idx]["title"] = title_fr or titles[pos]
+            updated[idx]["abstract"] = abstract_fr or abstracts[pos]
+        return updated
+    except Exception:
+        return list(docs)
+
+
 def _write_recall_log(
     output_file: str,
     *,

@@ -116,7 +116,7 @@ def _record_query_result(
 
 @app.function(
     image=image,
-    gpu="H100",
+    gpu="H200",
     timeout=60 * 60 * 10,
     secrets=[modal.Secret.from_name("hf-token")],
     volumes={CACHE_MOUNT: embedding_cache},
@@ -126,6 +126,7 @@ def evaluate_pipeline(
     force_recompute_dense_documents: bool = False,
     force_recompute_dense_queries: bool = False,
     split: str = "dev",
+    max_queries: int | None = None,
     collect_submission: bool = False,
     submission_volume_subdir: str = "submissions",
     fusion_method: str = "rrf",
@@ -205,11 +206,13 @@ def evaluate_pipeline(
     )
     embedding_cache.commit()
 
-    languages = ["de", "fr", "en"]
+    languages = ["de"]
     lang_tweets: dict[str, list[dict]] = {}
     cache_langs = {lang: f"{split}_{lang}" for lang in languages}
     for lang in languages:
         tweets = load_query_split(lang, split)
+        if max_queries is not None:
+            tweets = tweets[: max(0, int(max_queries))]
         lang_tweets[lang] = tweets
         query_texts = [row["text"] for row in tweets]
         pipeline.index_queries_for_language(
@@ -364,6 +367,7 @@ def main(
     force_recompute_dense_documents: bool = False,
     force_recompute_dense_queries: bool = False,
     split: str = "dev",
+    max_queries: int | None = None,
     export_submission_tsv: bool = False,
     submission_volume_subdir: str = "submissions",
     submission_download_dir: str = "submissions",
@@ -402,6 +406,7 @@ def main(
         force_recompute_dense_documents=force_recompute_dense_documents,
         force_recompute_dense_queries=force_recompute_dense_queries,
         split=split,
+        max_queries=max_queries,
         collect_submission=export_submission_tsv,
         submission_volume_subdir=submission_volume_subdir,
         fusion_method=fusion_method,
