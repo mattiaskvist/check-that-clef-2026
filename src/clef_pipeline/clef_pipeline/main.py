@@ -138,6 +138,7 @@ def evaluate_pipeline(
     disable_sparse: bool = False,
     reranker_model: str = "nemotron",
     disable_reranker: bool = False,
+    target_language: str | None = "fr",
     sparse_vanilla: bool = False,
     custom_papers: str | None = None,
 ):
@@ -181,6 +182,7 @@ def evaluate_pipeline(
         disable_sparse=disable_sparse,
         reranker_model=reranker_model,
         disable_reranker=disable_reranker,
+        target_language=target_language,
         sparse_k1=sparse_k1,
         sparse_b=sparse_b,
         sparse_use_bigrams=sparse_use_bigrams,
@@ -206,7 +208,7 @@ def evaluate_pipeline(
     )
     embedding_cache.commit()
 
-    languages = ["de"]
+    languages = ["en"]
     lang_tweets: dict[str, list[dict]] = {}
     cache_langs = {lang: f"{split}_{lang}" for lang in languages}
     for lang in languages:
@@ -380,6 +382,7 @@ def main(
     disable_sparse: bool = False,
     reranker_model: str = "nemotron",
     disable_reranker: bool = False,
+    target_language: str | None = "fr",
     sparse_vanilla: bool = False,
     metrics_output_file: str | None = None,
     recall_log_file: str | None = None,
@@ -418,6 +421,7 @@ def main(
         disable_sparse=disable_sparse,
         reranker_model=reranker_model,
         disable_reranker=disable_reranker,
+        target_language=target_language,
         sparse_vanilla=sparse_vanilla,
         custom_papers=custom_papers,
     )

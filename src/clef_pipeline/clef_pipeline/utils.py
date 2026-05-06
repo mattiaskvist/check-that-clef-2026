@@ -126,20 +126,30 @@ def read_custom_papers(file_path: str, start_id: int = 11000) -> list[dict]:
     return documents
 
 
-def translate_de_tweets_to_fr(texts: list[str]) -> list[str]:
-    """Translate German tweet/query texts into French.
+def translate_texts(
+    texts: list[str],
+    *,
+    source_language: str | None,
+    target_language: str | None,
+) -> list[str]:
+    """Translate a batch of texts from ``source_language`` to ``target_language``.
 
-    Notes:
-        - Intended for query preprocessing only (tweets), not for collection articles.
-        - Uses ``deep_translator`` backends which may require network access.
-        - On any translation failure, returns the original texts unchanged.
+    This is a best-effort helper. If translation fails (e.g. network), the input
+    is returned unchanged.
     """
     if not texts:
         return []
+    if not target_language:
+        return list(texts)
+    source = (source_language or "auto").strip().lower()
+    target = target_language.strip().lower()
+    if source == target:
+        return list(texts)
+
     try:
         from deep_translator import GoogleTranslator
 
-        translator = GoogleTranslator(source="de", target="fr")
+        translator = GoogleTranslator(source=source, target=target)
         translate_batch = getattr(translator, "translate_batch", None)
         if callable(translate_batch):
             translated = translate_batch(texts)
@@ -150,57 +160,40 @@ def translate_de_tweets_to_fr(texts: list[str]) -> list[str]:
         return list(texts)
 
 
-def translate_de_articles_to_fr(docs: list[dict]) -> list[dict]:
-    """Translate German collection documents (title/abstract) into French.
-
-    Only documents explicitly tagged as German are translated. This function
-    expects language metadata to be present (e.g. ``lang`` or ``language``).
-
-    Translation is best-effort: on any failure, the original documents are
-    returned unchanged.
-    """
+def translate_documents_fields(
+    docs: list[dict],
+    *,
+    target_language: str | None,
+    language_key_candidates: tuple[str, ...] = ("lang", "language"),
+    fields: tuple[str, ...] = ("title", "abstract"),
+) -> list[dict]:
+    """Translate selected string fields in documents into ``target_language``."""
     if not docs:
         return []
+    if not target_language:
+        return list(docs)
 
-    indices: list[int] = []
-    titles: list[str] = []
-    abstracts: list[str] = []
-    for i, doc in enumerate(docs):
-        lang = str(doc.get("lang") or doc.get("language") or "").lower().strip()
-        if not (lang == "de" or lang.startswith("de-")):
+    updated = [dict(doc) for doc in docs]
+    for i, doc in enumerate(updated):
+        lang = None
+        for key in language_key_candidates:
+            if key in doc and doc.get(key):
+                lang = str(doc.get(key))
+                break
+        lang_norm = str(lang or "auto").lower().strip()
+        if lang_norm == target_language.lower().strip():
             continue
-        indices.append(i)
-        titles.append(str(doc.get("title") or ""))
-        abstracts.append(str(doc.get("abstract") or ""))
 
-    if not indices:
-        return list(docs)
-
-    try:
-        from deep_translator import GoogleTranslator
-
-        translator = GoogleTranslator(source="de", target="fr")
-        translate_batch = getattr(translator, "translate_batch", None)
-        if callable(translate_batch):
-            titles_fr = translate_batch(titles)
-            abstracts_fr = translate_batch(abstracts)
-        else:
-            titles_fr = [translator.translate(text) for text in titles]
-            abstracts_fr = [translator.translate(text) for text in abstracts]
-
-        updated = [dict(doc) for doc in docs]
-        for pos, idx in enumerate(indices):
-            title_fr = titles_fr[pos] if isinstance(titles_fr[pos], str) else titles[pos]
-            abstract_fr = (
-                abstracts_fr[pos]
-                if isinstance(abstracts_fr[pos], str)
-                else abstracts[pos]
-            )
-            updated[idx]["title"] = title_fr or titles[pos]
-            updated[idx]["abstract"] = abstract_fr or abstracts[pos]
-        return updated
-    except Exception:
-        return list(docs)
+        for field in fields:
+            value = doc.get(field)
+            if not isinstance(value, str) or not value.strip():
+                continue
+            translated = translate_texts(
+                [value], source_language=lang_norm, target_language=target_language
+            )[0]
+            doc[field] = translated
+        updated[i] = doc
+    return updated
 
 
 def _write_recall_log(

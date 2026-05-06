@@ -33,6 +33,7 @@ class PipelineConfig:
     fusion_top_k: int = 30
     sparse_cache_top_k: int = 2000
     final_top_k: int = 5
+    target_language: str | None = None
     hf_fusion_repo_id: str | None = None
     hf_token: str | None = None
 
@@ -51,6 +52,7 @@ def build_pipeline_config(
     disable_sparse: bool = False,
     reranker_model: str = "nemotron",
     disable_reranker: bool = False,
+    target_language: str | None = "fr",
     sparse_k1: float = 2.5,
     sparse_b: float = 0.85,
     sparse_use_bigrams: bool = True,
@@ -98,6 +100,7 @@ def build_pipeline_config(
             fusion_top_k=fusion_top_k,
             sparse_cache_top_k=2000,
             final_top_k=5,
+            target_language=target_language,
             hf_fusion_repo_id=hf_fusion_repo_id,
             hf_token=hf_token,
         )
@@ -114,6 +117,7 @@ def build_pipeline_config(
             fusion_top_k=fusion_top_k,
             sparse_cache_top_k=2000,
             final_top_k=5,
+            target_language=target_language,
             hf_fusion_repo_id=hf_fusion_repo_id,
             hf_token=hf_token,
         )
@@ -130,6 +134,7 @@ def build_pipeline_config(
             fusion_top_k=fusion_top_k,
             sparse_cache_top_k=2000,
             final_top_k=5,
+            target_language=target_language,
             hf_fusion_repo_id=hf_fusion_repo_id,
             hf_token=hf_token,
         )
@@ -146,6 +151,7 @@ def build_pipeline_config(
             fusion_top_k=fusion_top_k,
             sparse_cache_top_k=2000,
             final_top_k=5,
+            target_language=target_language,
             hf_fusion_repo_id=hf_fusion_repo_id,
             hf_token=hf_token,
         )

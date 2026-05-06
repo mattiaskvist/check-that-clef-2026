@@ -8,7 +8,7 @@ from collections import OrderedDict
 from .fusions import RRFFuser, RandomForestFuser
 from .interfaces import BaseReranker
 from .pipeline_config import PipelineConfig
-from .utils import translate_de_articles_to_fr, translate_de_tweets_to_fr
+from .utils import translate_texts
 
 
 class RetrievalPipeline:
@@ -86,11 +86,6 @@ class RetrievalPipeline:
             pubkey = str(custom_doc["pubkey"])
             by_pubkey[pubkey] = dict(custom_doc)
         return list(by_pubkey.values())
-
-    @staticmethod
-    def _preprocess_collection_documents(collection_documents: list[dict]) -> list[dict]:
-        """Apply the first document processing step before indexing retrievers."""
-        return translate_de_articles_to_fr(collection_documents)
 
     def _index_one_retriever(
         self,
@@ -173,18 +168,6 @@ class RetrievalPipeline:
         """Resolve the max character budget for dense document indexing."""
         return self.DEFAULT_DENSE_DOC_MAX_CHARS
 
-    @staticmethod
-    def _preprocess_query_texts(lang: str, query_texts: list[str]) -> list[str]:
-        """Apply the first query processing step before any retrievers run."""
-        if lang == "de":
-            return translate_de_tweets_to_fr(query_texts)
-        return list(query_texts)
-
-    @classmethod
-    def _preprocess_query_text(cls, lang: str, query_text: str) -> str:
-        processed = cls._preprocess_query_texts(lang, [query_text])
-        return processed[0] if processed else query_text
-
     @classmethod
     def clone_runtime(
         cls,
@@ -229,9 +212,6 @@ class RetrievalPipeline:
         self.collection_documents = self._merge_documents(
             collection_documents, custom_documents
         )
-        self.collection_documents = self._preprocess_collection_documents(
-            self.collection_documents
-        )
         self.article_pubkeys = [doc["pubkey"] for doc in self.collection_documents]
         dense_doc_text_limit = self._dense_doc_text_limit()
         article_texts = [
@@ -274,7 +254,6 @@ class RetrievalPipeline:
             force_recompute_sparse_cache: Whether sparse query cache is bypassed.
             force_recompute_dense_queries: Whether dense query cache is bypassed.
         """
-        query_texts = self._preprocess_query_texts(lang, query_texts)
         cache_lang_key = cache_lang or lang
         for retriever_name, retriever in self.retrievers.items():
             cache_name = f"{retriever_name}_queries_{cache_lang_key}"
@@ -399,10 +378,31 @@ class RetrievalPipeline:
         """Apply reranking over fusion candidates when reranker is enabled."""
         if self.reranker is None or not candidate_indices:
             return candidate_indices
+        corpus = self.reranker_corpus
+        target_language = self.config.target_language
+        if target_language:
+            corpus = list(corpus)
+            per_lang: dict[str, list[tuple[int, str]]] = {}
+            for idx in candidate_indices:
+                if 0 <= idx < len(self.collection_documents):
+                    doc = self.collection_documents[idx]
+                    doc_lang = str(doc.get("lang") or doc.get("language") or "auto")
+                else:
+                    doc_lang = "auto"
+                per_lang.setdefault(doc_lang, []).append((idx, corpus[idx]))
+
+            for doc_lang, items in per_lang.items():
+                translated = translate_texts(
+                    [text for _idx, text in items],
+                    source_language=doc_lang,
+                    target_language=target_language,
+                )
+                for (doc_idx, _text), translated_text in zip(items, translated):
+                    corpus[doc_idx] = translated_text
         reranked = self.reranker.rerank(
             query=query_text,
             doc_indices=candidate_indices,
-            corpus=self.reranker_corpus,
+            corpus=corpus,
         )
         return [doc_idx for doc_idx, _score in reranked]
 
@@ -424,7 +424,6 @@ class RetrievalPipeline:
         Returns:
             Dict containing final predictions and per-stage publication keys.
         """
-        query_text = self._preprocess_query_text(lang, query_text)
         ranked_indices_by_stage, score_lists_by_stage = self._run_retrievers_for_query(
             query_idx=query_idx, cache_lang=cache_lang or lang
         )
@@ -459,7 +458,6 @@ class RetrievalPipeline:
         Returns:
             Final predictions and stage outputs for the query.
         """
-        query_text = self._preprocess_query_text(lang, query_text)
         cache_lang = f"{lang}_adhoc_{uuid.uuid4().hex[:8]}"
         self.index_queries_for_language(
             lang=lang,
@@ -467,7 +465,10 @@ class RetrievalPipeline:
             cache_lang=cache_lang,
         )
         return self.search_cached_query(
-            query_idx=0, query_text=query_text, lang=cache_lang
+            query_idx=0,
+            query_text=query_text,
+            lang=lang,
+            cache_lang=cache_lang,
         )
 
     def get_fusion_retrievers(self) -> tuple[object, object]:
