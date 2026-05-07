@@ -219,14 +219,22 @@ class HarrierRetriever(BaseRetriever):
         "Instruct: Retrieve the implicitly referenced scientific article\nQuery: "
     )
 
+    DEFAULT_GERMAN_QUERY_PROMPT = "Instruct: Finde den relevantesten medizinisch-wissenschaftlichen Artikel zu dieser deutschsprachigen Aussage. Bewahre Fachbegriffe exakt.\nQuery: "
+
+    DEFAULT_QUERY_PROMPT = DEFAULT_GERMAN_QUERY_PROMPT
+
     def __init__(
-        self, model_name: str = "microsoft/harrier-oss-v1-27b", batch_size: int = 2
+        self,
+        model_name: str = "microsoft/harrier-oss-v1-27b",
+        batch_size: int = 24,
+        lora_id: str | None = None,
     ):
         """Load Harrier embedding model and runtime settings.
 
         Args:
             model_name: Harrier model id.
             batch_size: Embedding batch size for encode calls.
+            lora_id: Optional PEFT adapter id or path to inject into the model.
         """
         import torch
         from sentence_transformers import util
@@ -235,6 +243,7 @@ class HarrierRetriever(BaseRetriever):
         self.torch = torch
         self.model_name = model_name
         self.batch_size = batch_size
+        self.lora_id = lora_id
         self.query_embeddings = None
         self._query_embeddings_by_name = {}
         self.prompt = self.DEFAULT_QUERY_PROMPT
@@ -244,7 +253,11 @@ class HarrierRetriever(BaseRetriever):
 
     def _cache_key(self) -> str:
         """Build cache namespace identifier for model settings."""
-        return self.model_name.replace("/", "--")
+        key = self.model_name.replace("/", "--")
+        lora_id = getattr(self, "lora_id", None)
+        if lora_id:
+            key += f"+{lora_id.replace('/', '--')}"
+        return key
 
     @staticmethod
     def _texts_fingerprint(texts: list[str]) -> str:
@@ -294,6 +307,7 @@ class HarrierRetriever(BaseRetriever):
         """
         import os
 
+        from peft import PeftModel
         from sentence_transformers import SentenceTransformer
 
         if cache_path and os.path.exists(cache_path) and not force_recompute:
@@ -307,8 +321,20 @@ class HarrierRetriever(BaseRetriever):
 
         if self.model is None:
             self.model = SentenceTransformer(
-                self.model_name, device="cuda", model_kwargs={"dtype": "auto"}
+                self.model_name,
+                device="cuda",
+                model_kwargs={"dtype": "auto"},
+                token=os.environ.get("HF_TOKEN"),
             )
+            lora_id = getattr(self, "lora_id", None)
+            if lora_id:
+                print(f"Injecting LoRA adapters from {lora_id}...")
+                self.model[0].auto_model = PeftModel.from_pretrained(
+                    self.model[0].auto_model,
+                    lora_id,
+                    token=os.environ.get("HF_TOKEN"),
+                )
+                self.model = self.model.to("cuda")
 
         print(f"Encoding {len(texts)} {label}...")
         embs = self.model.encode(
