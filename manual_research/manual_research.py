@@ -5,15 +5,21 @@ from tqdm import tqdm
 import nltk
 import string
 from nltk.corpus import stopwords
-from nltk.stem import LancasterStemmer
+from nltk.stem import LancasterStemmer, Cistem
 from deep_translator import GoogleTranslator
 from multiprocessing import Pool, cpu_count, Manager
 from collections import defaultdict, Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import os
+import json
 
 
 # Config
 LANG = "de"
 LOG_FILE = f"manual_research/research_results_{LANG}.tsv"
+
+TRANSLATION_CACHE_FILE = f"translation_cache_{LANG}.json"
+TRANSLATION_WORKERS = 10
 
 TRANSLATE_TABLE = str.maketrans(string.punctuation, " " * len(string.punctuation))
 stemmer = LancasterStemmer()
@@ -37,6 +43,9 @@ else:
     PERCENT = 10
     K1 = 2.0
     B = 1.0
+
+if LANG == "de":
+    stemmer = Cistem()
 
 TOP_K = 50
 K_VALUES = [3, 5, 25, 50]
@@ -124,22 +133,97 @@ def build_corpus(records):
     return docs, np.array(pubkeys)
 
 
+# translation cache
+def load_translation_cache():
+
+    if not os.path.exists(TRANSLATION_CACHE_FILE):
+        return {}
+
+    try:
+        with open(TRANSLATION_CACHE_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return {}
+
+
+def save_translation_cache(cache):
+
+    tmp = TRANSLATION_CACHE_FILE + ".tmp"
+
+    with open(tmp, "w") as f:
+        json.dump(cache, f)
+
+    os.replace(tmp, TRANSLATION_CACHE_FILE)
+
+
 # translate tweets
 def translate_tweets_if_needed(tweets):
 
     if LANG not in ("de", "fr"):
         return tweets
 
-    translator = GoogleTranslator(source=LANG, target="en")
+    cache = load_translation_cache()
 
-    for t in tqdm(tweets, desc="Translating"):
+    uncached = []
+
+    for idx, t in enumerate(tweets):
 
         text = t["text"][:5000]
 
-        try:
-            t["text"] = translator.translate(text)
-        except:
-            t["text"] = text
+        if text in cache:
+            t["text"] = cache[text]
+        else:
+            uncached.append((idx, text))
+
+    if not uncached:
+        return tweets
+
+    chunk_size = max(1, len(uncached) // TRANSLATION_WORKERS)
+
+    chunks = [
+        uncached[i:i + chunk_size]
+        for i in range(0, len(uncached), chunk_size)
+    ]
+
+    def worker(chunk):
+
+        translator = GoogleTranslator(source=LANG, target="en")
+
+        out = []
+
+        for idx, text in chunk:
+
+            try:
+                translated = text + translator.translate(text)
+            except:
+                translated = text
+
+            out.append((idx, text, translated))
+
+        return out
+
+    with ThreadPoolExecutor(max_workers=TRANSLATION_WORKERS) as executor:
+
+        futures = [
+            executor.submit(worker, chunk)
+            for chunk in chunks
+            if len(chunk) > 0
+        ]
+
+        for future in tqdm(
+            as_completed(futures),
+            total=len(futures),
+            desc="Translating"
+        ):
+
+            results = future.result()
+
+            for idx, original, translated in results:
+
+                tweets[idx]["text"] = translated
+                cache[original] = translated
+
+    save_translation_cache(cache)
 
     return tweets
 
