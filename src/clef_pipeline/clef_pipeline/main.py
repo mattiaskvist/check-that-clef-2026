@@ -3,7 +3,7 @@
 import modal
 
 from .logging_utils import StageTimer, get_logger
-from .metrics import EvaluationMetrics
+from .metrics import DENSE_SPARSE_RECALL_CUTOFFS, EvaluationMetrics
 from .pipeline_config import build_pipeline_config
 from .registry import build_pipeline_from_config
 from .submission import (
@@ -43,6 +43,15 @@ CACHE_MOUNT = "/cache/embeddings"
 logger = get_logger("clef_pipeline.modal")
 
 
+def _format_dense_sparse_metrics(stage_metrics: dict[str, float]) -> str:
+    """Format MRR and recall metrics for dense/sparse stages."""
+    recall_metrics = " | ".join(
+        f"R@{cutoff}: {stage_metrics[f'r{cutoff}']:.4f}"
+        for cutoff in DENSE_SPARSE_RECALL_CUTOFFS
+    )
+    return f"MRR@5: {stage_metrics['mrr5']:.4f} | {recall_metrics}"
+
+
 def _print_language_summary(
     lang: str, data: dict[str, object], fusion_top_k: int, fusion_label: str
 ):
@@ -64,12 +73,8 @@ def _print_language_summary(
         return
 
     print(f"\n--- Summary for {lang.upper()} ({data['Total Queries']} Queries) ---")
-    print(
-        f"Dense Only:   MRR@5: {metrics['dense']['mrr5']:.4f} | R@5: {metrics['dense']['r5']:.4f} | R@10: {metrics['dense']['r10']:.4f} | R@30: {metrics['dense']['r30']:.4f} | R@50: {metrics['dense']['r50']:.4f}"
-    )
-    print(
-        f"Sparse Only:  MRR@5: {metrics['sparse']['mrr5']:.4f} | R@5: {metrics['sparse']['r5']:.4f} | R@10: {metrics['sparse']['r10']:.4f} | R@30: {metrics['sparse']['r30']:.4f} | R@50: {metrics['sparse']['r50']:.4f}"
-    )
+    print(f"Dense Only:   {_format_dense_sparse_metrics(metrics['dense'])}")
+    print(f"Sparse Only:  {_format_dense_sparse_metrics(metrics['sparse'])}")
     print(
         f"{fusion_label} Output:   MRR@5: {metrics['rrf']['mrr5']:.4f} | R@{fusion_top_k}: {metrics['rrf'][f'r{fusion_top_k}']:.4f}"
     )
@@ -206,7 +211,7 @@ def evaluate_pipeline(
     )
     embedding_cache.commit()
 
-    languages = languages or ["de", "fr", "en"]
+    languages = ["de"]
     lang_tweets: dict[str, list[dict]] = {}
     cache_langs = {lang: f"{split}_{lang}" for lang in languages}
     for lang in languages:
@@ -287,12 +292,8 @@ def evaluate_pipeline(
             )
             continue
         print(f"\n[{lang.upper()}] - {data['Total Queries']} Queries Evaluated")
-        print(
-            f"  ├─ Dense Only:    MRR@5: {lang_metrics['dense']['mrr5']:.4f} | R@5: {lang_metrics['dense']['r5']:.4f} | R@10: {lang_metrics['dense']['r10']:.4f} | R@30: {lang_metrics['dense']['r30']:.4f} | R@50: {lang_metrics['dense']['r50']:.4f}"
-        )
-        print(
-            f"  ├─ Sparse Only:   MRR@5: {lang_metrics['sparse']['mrr5']:.4f} | R@5: {lang_metrics['sparse']['r5']:.4f} | R@10: {lang_metrics['sparse']['r10']:.4f} | R@30: {lang_metrics['sparse']['r30']:.4f} | R@50: {lang_metrics['sparse']['r50']:.4f}"
-        )
+        print(f"  ├─ Dense Only:    {_format_dense_sparse_metrics(lang_metrics['dense'])}")
+        print(f"  ├─ Sparse Only:   {_format_dense_sparse_metrics(lang_metrics['sparse'])}")
         print(
             f"  ├─ {fusion_label}:    MRR@5: {lang_metrics['rrf']['mrr5']:.4f} | R@{config.fusion_top_k}: {lang_metrics['rrf'][f'r{config.fusion_top_k}']:.4f}"
         )
@@ -318,10 +319,10 @@ def evaluate_pipeline(
             "Queries Across All Languages"
         )
         print(
-            f"  ├─ Overall Dense:    MRR@5: {summary['global']['dense']['mrr5']:.4f} | R@5: {summary['global']['dense']['r5']:.4f} | R@10: {summary['global']['dense']['r10']:.4f} | R@30: {summary['global']['dense']['r30']:.4f} | R@50: {summary['global']['dense']['r50']:.4f}"
+            f"  ├─ Overall Dense:    {_format_dense_sparse_metrics(summary['global']['dense'])}"
         )
         print(
-            f"  ├─ Overall Sparse:   MRR@5: {summary['global']['sparse']['mrr5']:.4f} | R@5: {summary['global']['sparse']['r5']:.4f} | R@10: {summary['global']['sparse']['r10']:.4f} | R@30: {summary['global']['sparse']['r30']:.4f} | R@50: {summary['global']['sparse']['r50']:.4f}"
+            f"  ├─ Overall Sparse:   {_format_dense_sparse_metrics(summary['global']['sparse'])}"
         )
         print(
             f"  ├─ Overall {fusion_label}:      MRR@5: {summary['global']['rrf']['mrr5']:.4f} | R@{config.fusion_top_k}: {summary['global']['rrf'][f'r{config.fusion_top_k}']:.4f}"
