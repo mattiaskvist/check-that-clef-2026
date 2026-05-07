@@ -116,7 +116,7 @@ def _record_query_result(
 
 @app.function(
     image=image,
-    gpu="H100",
+    gpu="B200",
     timeout=60 * 60 * 10,
     secrets=[modal.Secret.from_name("hf-token")],
     volumes={CACHE_MOUNT: embedding_cache},
