@@ -316,8 +316,8 @@ class Qwen3Reranker(BaseReranker):
     def __init__(
         self,
         model_name: str = "Qwen/Qwen3-Reranker-8B",
-        max_length: int = 2048,
-        micro_batch_size: int = 8,
+        max_length: int | None = 8192,
+        micro_batch_size: int = 16,
         instruction: str | None = None,
     ):
         """Store model settings and defer heavy loading until first use.
