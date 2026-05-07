@@ -5,7 +5,7 @@ from tqdm import tqdm
 import nltk
 import string
 from nltk.corpus import stopwords
-from nltk.stem import LancasterStemmer, Cistem
+from nltk.stem import SnowballStemmer, Cistem
 from deep_translator import GoogleTranslator
 from multiprocessing import Pool, cpu_count, Manager
 from collections import defaultdict, Counter
@@ -15,14 +15,14 @@ import json
 
 
 # Config
-LANG = "de"
+LANG = "en"
 LOG_FILE = f"manual_research/research_results_{LANG}.tsv"
 
 TRANSLATION_CACHE_FILE = f"translation_cache_{LANG}.json"
 TRANSLATION_WORKERS = 10
 
 TRANSLATE_TABLE = str.maketrans(string.punctuation, " " * len(string.punctuation))
-stemmer = LancasterStemmer()
+stemmer = SnowballStemmer("english" if LANG == "en" else "german" if LANG == "de" else "french")
 
 # language switch
 USE_ADVANCED = (LANG == "en")
