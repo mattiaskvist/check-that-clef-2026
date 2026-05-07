@@ -15,14 +15,17 @@ import json
 
 
 # Config
-LANG = "en"
+LANG = "de"
 LOG_FILE = f"manual_research/research_results_{LANG}.tsv"
 
 TRANSLATION_CACHE_FILE = f"translation_cache_{LANG}.json"
-TRANSLATION_WORKERS = 10
+TRANSLATION_WORKERS = 100
 
 TRANSLATE_TABLE = str.maketrans(string.punctuation, " " * len(string.punctuation))
 stemmer = SnowballStemmer("english" if LANG == "en" else "german" if LANG == "de" else "french")
+stemmer_en = SnowballStemmer("english")
+stemmer_fr = SnowballStemmer("french")
+stemmer_de = Cistem()
 
 # language switch
 USE_ADVANCED = (LANG == "en")
@@ -67,22 +70,53 @@ except:
     nltk.download("stopwords")
     STOPWORDS = set(stopwords.words(LANG_NLTK))
 
+try:
+    STOPWORDS_EN = set(stopwords.words("english"))
+except:
+    nltk.download("stopwords")
+    STOPWORDS_EN = set(stopwords.words("english"))
+
 
 # tokenization
 def tokenize(text):
 
-    text = text.lower().translate(TRANSLATE_TABLE)
+    def _tokenize_segment(segment: str, seg_stemmer, seg_stopwords: set[str]) -> list[str]:
+        segment = segment.lower().translate(TRANSLATE_TABLE)
 
-    tokens = [
-        stemmer.stem(t)
-        for t in text.split()
-        if t not in STOPWORDS and len(t) > 1
-    ]
+        out = [
+            seg_stemmer.stem(t)
+            for t in segment.split()
+            if t not in seg_stopwords and len(t) > 1
+        ]
 
-    if len(tokens) > 1:
-        tokens += [a + "_" + b for a, b in zip(tokens[:-1], tokens[1:])]
+        if len(out) > 1:
+            out += [a + "_" + b for a, b in zip(out[:-1], out[1:])]
 
-    return tokens
+        return out
+
+    if "[SEP]" in text:
+        left, right = text.split("[SEP]", 1)
+
+        # original language segment
+        if LANG == "de":
+            left_tokens = _tokenize_segment(left, stemmer_de, STOPWORDS)
+        elif LANG == "fr":
+            left_tokens = _tokenize_segment(left, stemmer_fr, STOPWORDS)
+        else:
+            left_tokens = _tokenize_segment(left, stemmer_en, STOPWORDS)
+
+        # translated segment (always English)
+        right_tokens = _tokenize_segment(right, stemmer_en, STOPWORDS_EN)
+
+        return left_tokens + right_tokens
+
+    # no translation case
+    if LANG == "de":
+        return _tokenize_segment(text, stemmer_de, STOPWORDS)
+    elif LANG == "fr":
+        return _tokenize_segment(text, stemmer_fr, STOPWORDS)
+    else:
+        return _tokenize_segment(text, stemmer_en, STOPWORDS_EN)
 
 
 # article builder
@@ -190,15 +224,19 @@ def translate_tweets_if_needed(tweets):
         translator = GoogleTranslator(source=LANG, target="en")
 
         out = []
+        exception_count = 0
 
         for idx, text in chunk:
 
             try:
-                translated = text + translator.translate(text)
+                translated = text + " [SEP] " + translator.translate(text)
             except:
+                exception_count += 1
                 translated = text
 
             out.append((idx, text, translated))
+
+        print(f"Worker finished with {exception_count} exceptions.")
 
         return out
 
