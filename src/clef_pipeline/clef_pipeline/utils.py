@@ -1,5 +1,10 @@
 """Shared constants and utility functions for retrieval and scoring."""
 
+from __future__ import annotations
+
+import csv
+from pathlib import Path
+
 import nltk
 from nltk.corpus import stopwords
 
@@ -10,6 +15,15 @@ CHECKTHAT_DATASET = "sschellhammer/CT26_Task1_SourceRetrievalForScientificWebCla
 STOPWORDS = frozenset(
     stopwords.words("english") + stopwords.words("german") + stopwords.words("french")
 )
+
+
+def load_query_split(lang: str, split: str) -> list[dict]:
+    """Load one language split from the official CheckThat dataset."""
+    from datasets import load_dataset
+
+    if split == "test":
+        return list(load_dataset(CHECKTHAT_DATASET, name="test")[lang])
+    return list(load_dataset(CHECKTHAT_DATASET, lang)[split])
 
 
 def article_to_text(doc: dict) -> str:
@@ -72,3 +86,27 @@ class FusionProcessor:
 
         sorted_docs = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
         return [doc_id for doc_id, score in sorted_docs[:top_k]]
+
+
+def read_custom_papers(file_path: str, start_id: int = 11000) -> list[dict]:
+    """Read custom papers from a CSV file."""
+    path = Path(file_path)
+    if not path.exists():
+        raise FileNotFoundError(f"custom_papers file not found: {path}")
+    if path.suffix.lower() != ".csv":
+        raise ValueError("custom_papers must be a .csv file for now")
+
+    documents: list[dict] = []
+    with path.open("r", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        for i, row in enumerate(reader):
+            pubkey = start_id + i
+            documents.append(
+                {
+                    "pubkey": pubkey,
+                    "title": (row.get("Title") or "").strip(),
+                    "authors": (row.get("Authors") or "").strip(),
+                    "abstract": (row.get("Abstract") or "").strip(),
+                }
+            )
+    return documents

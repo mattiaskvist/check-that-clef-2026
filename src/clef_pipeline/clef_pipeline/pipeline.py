@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections import OrderedDict
+from threading import Lock
 
 from .fusions import RRFFuser, RandomForestFuser
 from .interfaces import BaseReranker
@@ -38,6 +39,7 @@ class RetrievalPipeline:
             self.retrievers[name] = retrievers[name]
 
         self.reranker = reranker if self.config.reranker.enabled else None
+        self._reranker_lock: Lock | None = Lock() if self.reranker is not None else None
         if self.config.fusion_method == "rrf":
             self.fuser = RRFFuser()
         elif self.config.fusion_method == "random_forest":
@@ -343,11 +345,20 @@ class RetrievalPipeline:
         """Apply reranking over fusion candidates when reranker is enabled."""
         if self.reranker is None or not candidate_indices:
             return candidate_indices
-        reranked = self.reranker.rerank(
-            query=query_text,
-            doc_indices=candidate_indices,
-            corpus=self.reranker_corpus,
-        )
+        lock = self._reranker_lock
+        if lock is None:
+            reranked = self.reranker.rerank(
+                query=query_text,
+                doc_indices=candidate_indices,
+                corpus=self.reranker_corpus,
+            )
+        else:
+            with lock:
+                reranked = self.reranker.rerank(
+                    query=query_text,
+                    doc_indices=candidate_indices,
+                    corpus=self.reranker_corpus,
+                )
         return [doc_idx for doc_idx, _score in reranked]
 
     def search_cached_query(

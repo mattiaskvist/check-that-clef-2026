@@ -220,7 +220,19 @@ zip -r predictions.zip predictions_*.tsv
 unzip -l predictions.zip
 ```
 
+<<<<<<< Updated upstream
 Upload `predictions.zip` to Codabench.
+=======
+Run the optimized sparse retriever locally (no Modal):
+
+```bash
+uv run python local_main.py --lang de --split dev
+```
+
+Some tests or workflows can import model-heavy packages. Full evaluation,
+deployment, and training require Modal and are not expected to run as part of a
+lightweight local smoke check.
+>>>>>>> Stashed changes
 
 Each team must create only one account in CodaBench and submit their predictions exclusively through that account.
 Make sure your account name matches that used during CLEF registration.

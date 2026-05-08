@@ -1,0 +1,32 @@
+{
+  "intersection": {
+    "max": 46,
+    "mean": 13.632124352331607,
+    "median": 11.0,
+    "min": 0
+  },
+  "jaccard": {
+    "max": 0.8518518518518519,
+    "mean": 0.18073851443232303,
+    "median": 0.12359550561797752,
+    "min": 0.0
+  },
+  "lang": "de",
+  "n_queries": 386,
+  "split": "dev",
+  "top_k": 50,
+  "union": {
+    "max": 100,
+    "mean": 86.3678756476684,
+    "median": 89.0,
+    "min": 54
+  },
+  "unique_no_translation": {
+    "mean": 36.36787564766839,
+    "median": 39.0
+  },
+  "unique_translation": {
+    "mean": 36.36787564766839,
+    "median": 39.0
+  }
+}
