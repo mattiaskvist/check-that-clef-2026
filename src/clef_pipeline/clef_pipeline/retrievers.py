@@ -543,7 +543,7 @@ class SparseRetriever(BaseRetriever):
                 top_k = 0
             return np.empty((top_k,), dtype=np.int32), np.zeros((top_k,), dtype=np.float32)
 
-        if lang == "en" and self._term_graph is not None:
+        if (lang == "en" or self.use_translation) and self._term_graph is not None:
             expanded = self._diffusion_expand(tokenized_query, self._term_graph)
             for term, weight in expanded.items():
                 postings = self.bm25_model.index.get(term)
