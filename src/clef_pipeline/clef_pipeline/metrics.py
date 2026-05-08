@@ -26,7 +26,7 @@ def _new_stage_buckets(fusion_top_k: int) -> dict[str, dict[str, list[float]]]:
         "dense": {m: [] for m in dense_sparse_metrics},
         "sparse": {m: [] for m in dense_sparse_metrics},
         "rrf": {"mrr5": [], f"r{fusion_top_k}": []},
-        "final": {"mrr5": [], "r5": []},
+        "final": {"mrr5": [], **{f"r{cutoff}": [] for cutoff in DENSE_SPARSE_RECALL_CUTOFFS},},
     }
 
 
@@ -81,7 +81,11 @@ class EvaluationMetrics:
 
         final_preds = stages.get("final", [])
         buckets["final"]["mrr5"].append(MRR_at_5(final_preds, true_pubkey))
-        buckets["final"]["r5"].append(recall_at_K(final_preds, true_pubkey, 5))
+
+        for cutoff in DENSE_SPARSE_RECALL_CUTOFFS:
+            buckets["final"][f"r{cutoff}"].append(
+                recall_at_K(final_preds, true_pubkey, cutoff)
+            )
 
     @staticmethod
     def _safe_average(values: list[float]) -> float:

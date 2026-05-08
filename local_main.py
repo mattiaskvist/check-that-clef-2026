@@ -93,6 +93,15 @@ def main() -> int:
     )
     retriever.index(collection)
 
+    print("Indexing no-translation sparse retriever...")
+    retriever_no_trans = SparseRetriever(
+        k1=sparse_k1,
+        b=sparse_b,
+        use_bigrams=sparse_use_bigrams,
+        use_translation=False,
+    )
+    retriever_no_trans.index(collection)
+
     print(f"Loading queries ({args.lang}/{args.split})...")
     queries = load_query_split(args.lang, args.split)
 
@@ -268,14 +277,84 @@ def main() -> int:
 
     metrics = EvaluationMetrics(fusion_top_k=args.top_k)
 
+    def _build_custom_fusion(
+        sparse_combined: list[int],
+        sparse_untranslated: list[int],
+        top_k: int = 200,
+        seed_k: int = 50,
+        untranslated_k: int = 50,
+    ) -> list[int]:
+        """
+        Fusion strategy:
+        1. top-50 from translated sparse
+        2. top-50 from untranslated sparse (unique only)
+        3. remaining from translated sparse (unique only)
+        cap at 200 total
+        """
+        seen = set()
+        fused = []
+
+        # 1) seed from translated sparse
+        for doc in sparse_combined[:seed_k]:
+            if doc not in seen:
+                seen.add(doc)
+                fused.append(doc)
+
+        # 2) add untranslated top-50
+        for doc in sparse_untranslated[:untranslated_k]:
+            if doc not in seen:
+                seen.add(doc)
+                fused.append(doc)
+
+        # 3) fill remainder from translated sparse (full list continuation)
+        for doc in sparse_combined:
+            if doc not in seen:
+                seen.add(doc)
+                fused.append(doc)
+            if len(fused) >= top_k:
+                break
+
+        return fused[:top_k]
+
     def _eval_one(query_idx: int, row: dict) -> tuple[int, str, dict[str, list[str]]]:
         query_text = row["text"]
-        ranked_doc_ids = retriever.search(query_text, lang=args.lang)[: args.top_k]
-        preds: list[str] = []
-        for doc_id in ranked_doc_ids:
+
+        # -----------------------------
+        # INDEPENDENT SPARSE RUNS
+        # -----------------------------
+        sparse_combined = retriever.search(
+            query_text,
+            lang=args.lang,
+        )[: args.top_k]
+
+        sparse_untranslated = retriever_no_trans.search(
+            query_text,
+            lang=args.lang,
+        )[: args.top_k]
+
+        # -----------------------------
+        # STRICT FUSION (NO DENSE)
+        # -----------------------------
+        final_ranked = _build_custom_fusion(
+            sparse_combined=sparse_combined,
+            sparse_untranslated=sparse_untranslated,
+            top_k=200,
+        )
+
+        # -----------------------------
+        # MAP TO PUBKEYS
+        # -----------------------------
+        preds = []
+        for doc_id in final_ranked:
             if 0 <= doc_id < len(pubkeys):
                 preds.append(pubkeys[doc_id])
-        stages = {"dense": [], "sparse": preds, "rrf": [], "final": preds}
+
+        stages = {
+            "sparse_combined": sparse_combined,
+            "sparse_untranslated": sparse_untranslated,
+            "final": preds,
+        }
+
         true_pubkey = str(row.get("pubkey") or "")
         return query_idx, true_pubkey, stages
 
