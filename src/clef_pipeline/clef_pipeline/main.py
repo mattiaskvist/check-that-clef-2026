@@ -169,6 +169,42 @@ def _split_indices(total: int, num_splits: int) -> list[list[int]]:
     return groups
 
 
+def _parse_query_shard(query_shard: str | None) -> tuple[int, int] | None:
+    """Parse a one-based query shard spec like ``1/3``."""
+    if not query_shard:
+        return None
+    try:
+        shard_index_text, shard_count_text = query_shard.split("/", 1)
+        shard_index = int(shard_index_text)
+        shard_count = int(shard_count_text)
+    except ValueError as exc:
+        raise ValueError("query_shard must use the form '<index>/<count>'.") from exc
+    if shard_count < 1:
+        raise ValueError("query_shard count must be at least 1.")
+    if shard_index < 1 or shard_index > shard_count:
+        raise ValueError("query_shard index must be between 1 and count.")
+    return shard_index, shard_count
+
+
+def _query_shard_indices(total: int, query_shard: str | None) -> list[int]:
+    """Return deterministic contiguous query indices for one shard."""
+    parsed_shard = _parse_query_shard(query_shard)
+    if parsed_shard is None:
+        return list(range(total))
+    shard_index, shard_count = parsed_shard
+    groups = _split_indices(total, shard_count)
+    if shard_index > len(groups):
+        return []
+    return groups[shard_index - 1]
+
+
+def _submission_split_label(split: str, query_shard: str | None) -> str:
+    """Return the submission directory split label, including shard if present."""
+    if not query_shard:
+        return split
+    return f"{split}-shard-{query_shard.replace('/', 'of')}"
+
+
 def _evaluate_query_chunk(
     *,
     pipeline,
@@ -435,6 +471,7 @@ def evaluate_pipeline(
     languages: list[str] | None = None,
     rerank_parallelism: int = 1,
     rerank_chunk_size: int | None = None,
+    query_shard: str | None = None,
 ):
     """Run the full retrieval evaluation workflow on Modal.
 
@@ -512,15 +549,24 @@ def evaluate_pipeline(
         print("\n==========================================")
         print(f"  QUEUING EVALUATION FOR LANGUAGE: {lang.upper()}")
         print("==========================================")
+        lang_query_indices = _query_shard_indices(len(lang_tweets[lang]), query_shard)
+        if query_shard:
+            print(
+                f"  Query shard {query_shard}: {len(lang_query_indices)} of "
+                f"{len(lang_tweets[lang])} queries"
+            )
         if rerank_chunk_size:
             query_chunks = [
-                list(range(start, end))
+                lang_query_indices[start:end]
                 for start, end in _chunk_indices(
-                    len(lang_tweets[lang]), rerank_chunk_size
+                    len(lang_query_indices), rerank_chunk_size
                 )
             ]
         else:
-            query_chunks = _split_indices(len(lang_tweets[lang]), worker_count)
+            query_chunks = _split_indices(len(lang_query_indices), worker_count)
+            query_chunks = [
+                [lang_query_indices[idx] for idx in chunk] for chunk in query_chunks
+            ]
         for query_indices in query_chunks:
             chunk_payloads.append(
                 {
@@ -648,8 +694,9 @@ def evaluate_pipeline(
     submission_artifacts = None
     if collect_submission:
         run_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        split_label = _submission_split_label(split, query_shard)
         mounted_output_dir = (
-            f"{CACHE_MOUNT}/{submission_volume_subdir.strip('/')}/{split}-{run_id}"
+            f"{CACHE_MOUNT}/{submission_volume_subdir.strip('/')}/{split_label}-{run_id}"
         )
         written_paths = write_submission_tsv_files(
             submission_predictions,
@@ -661,6 +708,7 @@ def evaluate_pipeline(
             "volume_name": EMBEDDING_CACHE_VOLUME_NAME,
             "remote_dir": remote_dir,
             "written_files": [path.rsplit("/", 1)[-1] for path in written_paths],
+            "query_shard": query_shard,
         }
 
     return {
@@ -694,6 +742,7 @@ def main(
     languages: str = "de,fr,en",
     rerank_parallelism: int = 1,
     rerank_chunk_size: int | None = None,
+    query_shard: str | None = None,
 ):
     """Local CLI entrypoint that dispatches Modal evaluation and export.
 
@@ -731,6 +780,7 @@ def main(
         languages=[lang.strip() for lang in languages.split(",") if lang.strip()],
         rerank_parallelism=rerank_parallelism,
         rerank_chunk_size=rerank_chunk_size,
+        query_shard=query_shard,
     )
 
     if metrics_output_file:
