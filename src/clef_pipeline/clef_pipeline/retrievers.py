@@ -219,7 +219,13 @@ class HarrierRetriever(BaseRetriever):
         "Instruct: Finde den relevantesten medizinisch-wissenschaftlichen Artikel "
         "zu dieser deutschsprachigen Aussage. Bewahre Fachbegriffe exakt.\nQuery: "
     )
-    DEFAULT_QUERY_PROMPT = DEFAULT_GERMAN_QUERY_PROMPT
+
+    DEFAULT_ENGLISH_QUERY_PROMPT = (
+        "Instruct: Find the most relevant medical/scientific article to this "
+        "English-language statement. Preserve technical terms exactly.\nQuery: "
+    )
+
+    DEFAULT_QUERY_PROMPT = DEFAULT_ENGLISH_QUERY_PROMPT
 
     def __init__(
         self,
