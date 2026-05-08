@@ -1,19 +1,117 @@
-# BGE-M3 Fine-Tuning
+# Dense Retriever Fine-Tuning
 
-`src/clef_training` contains the scripts used to mine hard negatives and train a
-LoRA adapter for BGE-M3 on the CheckThat source retrieval task.
+`src/clef_training` contains the scripts used to mine hard negatives and train
+LoRA adapters for dense retrievers on the CheckThat source retrieval task.
 
 The workflow is separate from the evaluation pipeline. It produces model
-artifacts that can later be referenced by the `bge-m3` retriever in
-`clef_pipeline`.
+artifacts that can later be referenced by retrievers in `clef_pipeline`.
 
 ## Files
 
 - `clef_training/hard_negative_mining.py`: builds JSONL triplets with
   `anchor`, `positive`, and `negative` fields.
 - `clef_training/train_bge_modal.py`: trains a BGE-M3 LoRA adapter on Modal.
+- `clef_training/train_harrier_en_modal.py`: mines English Harrier false
+  positives and trains a Harrier 27B LoRA adapter on Modal.
 - `clef_training/inference.py`: local smoke test for loading a trained adapter
   and scoring a query against example documents.
+
+## Harrier 27B English Fine-Tuning
+
+`train_harrier_en_modal.py` is the English-only Harrier workflow. It has two
+remote stages:
+
+1. Mine hard negatives from current `microsoft/harrier-oss-v1-27b` retrieval
+   mistakes on the English train split.
+2. Train a PEFT LoRA adapter on those triplets with English dev IR evaluation.
+
+Run both stages:
+
+```bash
+uv run modal run -d -m clef_training.train_harrier_en_modal \
+  --mode all \
+  --negatives-per-query 4 \
+  --search-top-k 100
+```
+
+Run only mining:
+
+```bash
+uv run modal run -d -m clef_training.train_harrier_en_modal --mode mine
+```
+
+Run only training after triplets already exist in the Modal volume:
+
+```bash
+uv run modal run -d -m clef_training.train_harrier_en_modal --mode train
+```
+
+Training checkpoints are saved frequently by default:
+
+```text
+--save-steps 100
+--eval-steps 1000
+--save-total-limit 12
+--resume-from-checkpoint auto
+```
+
+`auto` resumes from the newest `/data/harrier-27b-en-checkpoints/checkpoint-*`
+directory. Each checkpoint save also commits the Modal volume, so a later
+`--mode train` run can resume even after a container restart or interrupted job.
+Use `--resume-from-checkpoint none` to force a fresh run.
+The default separates checkpointing and evaluation for speed: recovery
+checkpoints are frequent, while expensive English dev IR evaluation runs less
+often. If you want the Trainer to reload the best English dev `ndcg@10`
+checkpoint automatically, set `--eval-steps` equal to `--save-steps`.
+
+Mining is recoverable too. The miner:
+
+- caches Harrier document embeddings at `/data/harrier_en_document_embeddings.pt`;
+- appends to `/data/harrier_en_hard_negatives.jsonl` when `--resume-mining` is
+  enabled;
+- skips query pubkeys already present in the JSONL; and
+- commits the Modal volume every few mined batches.
+
+Request two B200 GPUs for training:
+
+```bash
+uv run modal run -d -m clef_training.train_harrier_en_modal \
+  --mode train \
+  --multi-gpu
+```
+
+This exposes two GPUs to the Trainer. It may speed up training through the
+Trainer/Accelerate distributed data-parallel path. It deliberately does not use
+`device_map="auto"` because that can split Gemma/Harrier layers across devices
+and trigger cross-device tensor errors during the forward pass. Treat it as
+experimental: each process loads a full model replica on one GPU, so if a full
+replica does not fit per B200, a dedicated DeepSpeed/FSDP sharded setup is the
+next step.
+
+The default artifacts are written to the `clef-vol` Modal volume:
+
+```text
+/data/harrier_en_hard_negatives.jsonl
+/data/harrier_en_document_embeddings.pt
+/data/harrier-27b-en-checkpoints
+/data/harrier-27b-en-lora
+```
+
+The training job uses:
+
+- English train queries only;
+- Harrier-mined false positives as negatives;
+- `TripletLoss` with cosine distance;
+- LoRA target modules set to `all-linear` by default; and
+- English dev `ndcg@10` for best-checkpoint selection.
+
+The Modal image pins `transformers==4.57.6`, matching Harrier's model config.
+This avoids newer Gemma3 processor paths that can fail with a missing
+`preprocessor_config.json` for this text-only embedding checkpoint.
+
+After training, download or publish `/data/harrier-27b-en-lora`, then pass that
+adapter path or Hugging Face id to `HarrierRetriever(..., lora_id=...)` for
+evaluation.
 
 ## Mine Hard Negatives
 

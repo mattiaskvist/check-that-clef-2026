@@ -119,9 +119,146 @@ def _record_query_result(
     )
 
 
+def _chunk_indices(total: int, chunk_size: int) -> list[tuple[int, int]]:
+    """Split a query range into half-open chunks."""
+    effective_chunk_size = max(1, int(chunk_size))
+    return [
+        (start, min(start + effective_chunk_size, total))
+        for start in range(0, total, effective_chunk_size)
+    ]
+
+
+def _split_indices(total: int, num_splits: int) -> list[list[int]]:
+    """Split query indices into at most ``num_splits`` balanced groups."""
+    if total <= 0:
+        return []
+    split_count = min(total, max(1, int(num_splits)))
+    base_size, remainder = divmod(total, split_count)
+    groups = []
+    start = 0
+    for split_idx in range(split_count):
+        size = base_size + (1 if split_idx < remainder else 0)
+        end = start + size
+        groups.append(list(range(start, end)))
+        start = end
+    return groups
+
+
+def _evaluate_query_chunk(
+    *,
+    pipeline,
+    lang: str,
+    tweets: list[dict],
+    query_indices: list[int],
+    cache_lang: str,
+) -> list[dict[str, object]]:
+    """Evaluate a query slice and return replayable per-query results."""
+    outputs = []
+    for query_idx in query_indices:
+        row = tweets[query_idx]
+        result = pipeline.search_cached_query(
+            query_idx=query_idx,
+            query_text=row["text"],
+            lang=lang,
+            cache_lang=cache_lang,
+        )
+        outputs.append(
+            {
+                "lang": lang,
+                "query_idx": query_idx,
+                "row": row,
+                "result": result,
+            }
+        )
+    return outputs
+
+
 @app.function(
     image=image,
-    gpu="B200",
+    gpu="H200",
+    timeout=60 * 60 * 10,
+    secrets=[modal.Secret.from_name("hf-token")],
+    volumes={CACHE_MOUNT: embedding_cache},
+)
+def evaluate_query_chunk(payload: dict[str, object]) -> list[dict[str, object]]:
+    """Evaluate one cached query chunk in its own GPU container."""
+    import os
+
+    from datasets import load_dataset
+
+    split = normalize_split(payload["split"])
+    lang = payload["lang"]
+    query_indices = payload["query_indices"]
+    cache_lang = payload["cache_lang"]
+    custom_papers = payload.get("custom_papers")
+
+    sparse_vanilla = payload["sparse_vanilla"]
+    sparse_k1 = 1.5 if sparse_vanilla else 2.5
+    sparse_b = 0.75 if sparse_vanilla else 0.85
+    sparse_use_bigrams = not sparse_vanilla
+    sparse_use_translation = not sparse_vanilla
+
+    config = build_pipeline_config(
+        payload["profile"],
+        fusion_method=payload["fusion_method"],
+        fusion_top_k=payload["fusion_top_k"],
+        hf_fusion_repo_id=payload["hf_fusion_repo_id"],
+        hf_token=os.environ.get("HF_TOKEN"),
+        dense_model=payload["dense_model"],
+        disable_sparse=payload["disable_sparse"],
+        reranker_model=payload["reranker_model"],
+        disable_reranker=payload["disable_reranker"],
+        sparse_k1=sparse_k1,
+        sparse_b=sparse_b,
+        sparse_use_bigrams=sparse_use_bigrams,
+        sparse_use_translation=sparse_use_translation,
+    )
+    pipeline = build_pipeline_from_config(config)
+
+    collection_dataset = load_dataset(
+        CHECKTHAT_DATASET, "collection", split="collection"
+    )
+    collection_documents = collection_dataset.to_list()
+    if custom_papers:
+        custom_path = os.path.join(CACHE_MOUNT, custom_papers)
+        collection_documents.extend(read_custom_papers(custom_path, 11000))
+
+    pipeline.index_collection(
+        collection_documents=collection_documents,
+        cache_dir=CACHE_MOUNT,
+        force_recompute_dense_documents=False,
+    )
+
+    tweets = load_query_split(lang, split)
+    pipeline.index_queries_for_language(
+        lang=lang,
+        query_texts=[row["text"] for row in tweets],
+        cache_lang=cache_lang,
+        cache_dir=CACHE_MOUNT,
+        force_recompute_sparse_cache=False,
+        force_recompute_dense_queries=False,
+    )
+    pipeline.prepare_fusion_model(
+        cache_dir=CACHE_MOUNT,
+        languages=[lang],
+        force_retrain_fusion=False,
+        force_recompute_dense_queries=False,
+        force_recompute_sparse_cache=False,
+    )
+    pipeline.unload_dense_models()
+
+    return _evaluate_query_chunk(
+        pipeline=pipeline,
+        lang=lang,
+        tweets=tweets,
+        query_indices=query_indices,
+        cache_lang=cache_lang,
+    )
+
+
+@app.function(
+    image=image,
+    gpu="H200",
     timeout=60 * 60 * 10,
     secrets=[modal.Secret.from_name("hf-token")],
     volumes={CACHE_MOUNT: embedding_cache},
@@ -145,6 +282,8 @@ def evaluate_pipeline(
     sparse_vanilla: bool = False,
     custom_papers: str | None = None,
     languages: list[str] | None = None,
+    rerank_parallelism: int = 1,
+    rerank_chunk_size: int | None = None,
 ):
     """Run the full retrieval evaluation workflow on Modal.
 
@@ -211,7 +350,7 @@ def evaluate_pipeline(
     )
     embedding_cache.commit()
 
-    languages = ["de"]
+    languages = languages or ["de", "fr", "en"]
     lang_tweets: dict[str, list[dict]] = {}
     cache_langs = {lang: f"{split}_{lang}" for lang in languages}
     for lang in languages:
@@ -246,31 +385,90 @@ def evaluate_pipeline(
         {lang: [] for lang in languages} if collect_submission else {}
     )
 
-    for lang in languages:
-        tweets = lang_tweets[lang]
-        print("\n==========================================")
-        print(f"  STARTING EVALUATION FOR LANGUAGE: {lang.upper()}")
-        print("==========================================")
-        for i, row in enumerate(
-            tqdm(tweets, desc=f"Evaluating {lang.upper()} Queries")
-        ):
-            result = pipeline.search_cached_query(
-                query_idx=i,
-                query_text=row["text"],
-                lang=lang,
-                cache_lang=cache_langs[lang],
-            )
+    if rerank_parallelism > 1 and not disable_reranker:
+        chunk_payloads = []
+        worker_count = max(1, int(rerank_parallelism))
+        for lang in languages:
+            print("\n==========================================")
+            print(f"  QUEUING PARALLEL EVALUATION FOR LANGUAGE: {lang.upper()}")
+            print("==========================================")
+            if rerank_chunk_size:
+                query_chunks = [
+                    list(range(start, end))
+                    for start, end in _chunk_indices(
+                        len(lang_tweets[lang]), rerank_chunk_size
+                    )
+                ]
+            else:
+                query_chunks = _split_indices(len(lang_tweets[lang]), worker_count)
+            for query_indices in query_chunks:
+                chunk_payloads.append(
+                    {
+                        "split": split,
+                        "lang": lang,
+                        "query_indices": query_indices,
+                        "cache_lang": cache_langs[lang],
+                        "fusion_method": fusion_method,
+                        "fusion_top_k": fusion_top_k,
+                        "hf_fusion_repo_id": hf_fusion_repo_id,
+                        "profile": profile,
+                        "dense_model": dense_model,
+                        "disable_sparse": disable_sparse,
+                        "reranker_model": reranker_model,
+                        "disable_reranker": disable_reranker,
+                        "sparse_vanilla": sparse_vanilla,
+                        "custom_papers": custom_papers,
+                    }
+                )
 
-            _record_query_result(
-                lang=lang,
-                row=row,
-                query_idx=i,
-                result=result,
-                metrics=metrics,
-                submission_predictions=(
-                    submission_predictions if collect_submission else None
-                ),
-            )
+        with tqdm(total=len(chunk_payloads), desc="Evaluating rerank chunks") as pbar:
+            for wave_start in range(0, len(chunk_payloads), worker_count):
+                wave = chunk_payloads[wave_start : wave_start + worker_count]
+                for chunk_results in evaluate_query_chunk.map(
+                    wave, order_outputs=False
+                ):
+                    pbar.update(1)
+                    for item in chunk_results:
+                        _record_query_result(
+                            lang=item["lang"],
+                            row=item["row"],
+                            query_idx=item["query_idx"],
+                            result=item["result"],
+                            metrics=metrics,
+                            submission_predictions=(
+                                submission_predictions if collect_submission else None
+                            ),
+                        )
+    else:
+        for lang in languages:
+            tweets = lang_tweets[lang]
+            print("\n==========================================")
+            print(f"  STARTING EVALUATION FOR LANGUAGE: {lang.upper()}")
+            print("==========================================")
+            for i, row in enumerate(
+                tqdm(tweets, desc=f"Evaluating {lang.upper()} Queries")
+            ):
+                result = pipeline.search_cached_query(
+                    query_idx=i,
+                    query_text=row["text"],
+                    lang=lang,
+                    cache_lang=cache_langs[lang],
+                )
+
+                _record_query_result(
+                    lang=lang,
+                    row=row,
+                    query_idx=i,
+                    result=result,
+                    metrics=metrics,
+                    submission_predictions=(
+                        submission_predictions if collect_submission else None
+                    ),
+                )
+
+    if collect_submission:
+        for lang_predictions in submission_predictions.values():
+            lang_predictions.sort(key=lambda row: row["index"])
 
     summary = metrics.summary()
     global_results = summary["languages"]
@@ -370,7 +568,7 @@ def main(
     submission_volume_subdir: str = "submissions",
     submission_download_dir: str = "submissions",
     fusion_method: str = "rrf",
-    fusion_top_k: int = 30,
+    fusion_top_k: int = 60,
     force_retrain_fusion: bool = False,
     hf_fusion_repo_id: str | None = "boyes-boys-clef-2026/random-forest-fuser",
     profile: str = "custom",
@@ -382,6 +580,8 @@ def main(
     metrics_output_file: str | None = None,
     custom_papers: str | None = None,
     languages: str = "de,fr,en",
+    rerank_parallelism: int = 1,
+    rerank_chunk_size: int | None = None,
 ):
     """Local CLI entrypoint that dispatches Modal evaluation and export.
 
@@ -417,6 +617,8 @@ def main(
         sparse_vanilla=sparse_vanilla,
         custom_papers=custom_papers,
         languages=[lang.strip() for lang in languages.split(",") if lang.strip()],
+        rerank_parallelism=rerank_parallelism,
+        rerank_chunk_size=rerank_chunk_size,
     )
 
     if metrics_output_file:
