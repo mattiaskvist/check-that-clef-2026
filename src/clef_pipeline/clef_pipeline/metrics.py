@@ -7,6 +7,9 @@ from collections import defaultdict
 from .utils import MRR_at_5, recall_at_K
 
 
+DENSE_SPARSE_RECALL_CUTOFFS = (5, 10, 30, 50, 100, 200)
+
+
 def _new_stage_buckets(fusion_top_k: int) -> dict[str, dict[str, list[float]]]:
     """Create empty metric buckets for each pipeline stage.
 
@@ -16,9 +19,12 @@ def _new_stage_buckets(fusion_top_k: int) -> dict[str, dict[str, list[float]]]:
     Returns:
         Nested dict of metric lists keyed by stage and metric name.
     """
+    dense_sparse_metrics = ["mrr5"] + [
+        f"r{cutoff}" for cutoff in DENSE_SPARSE_RECALL_CUTOFFS
+    ]
     return {
-        "dense": {m: [] for m in ["mrr5", "r5", "r10", "r30", "r50"]},
-        "sparse": {m: [] for m in ["mrr5", "r5", "r10", "r30", "r50"]},
+        "dense": {m: [] for m in dense_sparse_metrics},
+        "sparse": {m: [] for m in dense_sparse_metrics},
         "rrf": {"mrr5": [], f"r{fusion_top_k}": []},
         "final": {"mrr5": [], "r5": []},
     }
@@ -38,6 +44,7 @@ class EvaluationMetrics:
             lambda: _new_stage_buckets(self.fusion_top_k)
         )
         self._counts: dict[str, int] = defaultdict(int)
+        self._labeled_counts: dict[str, int] = defaultdict(int)
 
     def add_query(
         self,
@@ -55,15 +62,16 @@ class EvaluationMetrics:
         self._counts[lang] += 1
         if not true_pubkey:
             return
+        self._labeled_counts[lang] += 1
 
         buckets = self._by_language[lang]
         for stage_name in ("dense", "sparse"):
             preds = stages.get(stage_name, [])
             buckets[stage_name]["mrr5"].append(MRR_at_5(preds, true_pubkey))
-            buckets[stage_name]["r5"].append(recall_at_K(preds, true_pubkey, 5))
-            buckets[stage_name]["r10"].append(recall_at_K(preds, true_pubkey, 10))
-            buckets[stage_name]["r30"].append(recall_at_K(preds, true_pubkey, 30))
-            buckets[stage_name]["r50"].append(recall_at_K(preds, true_pubkey, 50))
+            for cutoff in DENSE_SPARSE_RECALL_CUTOFFS:
+                buckets[stage_name][f"r{cutoff}"].append(
+                    recall_at_K(preds, true_pubkey, cutoff)
+                )
 
         rrf_preds = stages.get("rrf", [])
         buckets["rrf"]["mrr5"].append(MRR_at_5(rrf_preds, true_pubkey))
@@ -90,8 +98,16 @@ class EvaluationMetrics:
             Summary dict containing query counts and averaged metrics.
         """
         metrics = self._by_language.get(lang)
+        total_queries = self._counts[lang]
+        labeled_queries = self._labeled_counts[lang]
+        unlabeled_queries = total_queries - labeled_queries
         if not metrics:
-            return {"Total Queries": self._counts[lang], "metrics": None}
+            return {
+                "Total Queries": total_queries,
+                "Labeled Queries": labeled_queries,
+                "Unlabeled Queries": unlabeled_queries,
+                "metrics": None,
+            }
 
         summary = {}
         for stage_name, stage_metrics in metrics.items():
@@ -99,7 +115,12 @@ class EvaluationMetrics:
                 metric_name: self._safe_average(values)
                 for metric_name, values in stage_metrics.items()
             }
-        return {"Total Queries": self._counts[lang], "metrics": summary}
+        return {
+            "Total Queries": total_queries,
+            "Labeled Queries": labeled_queries,
+            "Unlabeled Queries": unlabeled_queries,
+            "metrics": summary,
+        }
 
     def summary(self) -> dict[str, object]:
         """Return language-level and global evaluation summaries."""
@@ -108,25 +129,31 @@ class EvaluationMetrics:
         }
 
         global_totals = _new_stage_buckets(self.fusion_top_k)
+        total_queries = 0
         total_labeled_queries = 0
         for lang, data in language_summary.items():
+            total_queries += data["Total Queries"]
             metrics = data["metrics"]
+            total_labeled_queries += data["Labeled Queries"]
             if metrics is None:
                 continue
-            total_labeled_queries += data["Total Queries"]
             for stage_name, stage_metrics in metrics.items():
                 for metric_name, value in stage_metrics.items():
                     global_totals[stage_name][metric_name].append(value)
 
-        global_summary = {
-            stage_name: {
-                metric_name: self._safe_average(values)
-                for metric_name, values in stage_metrics.items()
+        global_summary = None
+        if total_labeled_queries > 0:
+            global_summary = {
+                stage_name: {
+                    metric_name: self._safe_average(values)
+                    for metric_name, values in stage_metrics.items()
+                }
+                for stage_name, stage_metrics in global_totals.items()
             }
-            for stage_name, stage_metrics in global_totals.items()
-        }
         return {
             "languages": language_summary,
             "global": global_summary,
+            "total_queries": total_queries,
             "total_labeled_queries": total_labeled_queries,
+            "total_unlabeled_queries": total_queries - total_labeled_queries,
         }

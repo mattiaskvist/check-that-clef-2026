@@ -17,9 +17,11 @@ class _FakeRetriever:
         )
         self.indexed = False
         self.query_calls = []
+        self.indexed_corpus = None
 
     def index(self, corpus):
         self.indexed = True
+        self.indexed_corpus = list(corpus)
 
     def index_queries(self, queries, **kwargs):
         self.query_calls.append((tuple(queries), kwargs))
@@ -59,6 +61,26 @@ class _FakeFusionModel:
 
 
 class PipelineCoreTests(unittest.TestCase):
+    def test_dense_document_indexing_is_unlimited_by_default(self):
+        long_abstract = "a" * 3000
+        corpus = [{"pubkey": "p0", "title": "title", "abstract": long_abstract}]
+        dense = _FakeRetriever([0])
+
+        config = PipelineConfig(
+            retrievers=[RetrieverConfig(name="dense")],
+            reranker=RerankerConfig(name=None, enabled=False),
+            use_fusion=False,
+        )
+        pipeline = RetrievalPipeline(
+            config=config,
+            retrievers={"dense": dense},
+            reranker=None,
+        )
+
+        pipeline.index_collection(corpus)
+
+        self.assertIn(long_abstract, dense.indexed_corpus[0])
+
     def test_search_text_returns_top5_and_stage_outputs(self):
         corpus = [
             {"pubkey": "p0", "title": "t0", "abstract": "a0"},

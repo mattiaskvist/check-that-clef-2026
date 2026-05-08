@@ -1,8 +1,14 @@
 [project]
 name = "check-that-clef-2026"
-version = "0.1.0"
-description = "Add your description here"
+version = "1.0.0"
+description = "CLEF 2026 CheckThat source retrieval pipeline, demo, and BGE fine-tuning workspace"
 readme = "README.md"
+authors = [
+    {name = "Mattias Kvist", email = "mattias.kvist@telia.com"},
+    {name = "Eduardo Nazario", email = "edfnazario@gmail.com"},
+    {name = "dsuzener"},
+    {name = "Osvald Svaenus", email = "osvalds@kth.se"},
+]
 requires-python = ">=3.11"
 dependencies = [
     "clef-demo",
@@ -12,7 +18,7 @@ dependencies = [
     "deep-translator>=1.9.1",
     "dotenv>=0.9.9",
     "google>=3.0.0",
-    "google-genai>=1.68.0",
+    "httpx<0.28.0",
     "huggingface-hub>=1.7.2",
     "ipykernel>=7.2.0",
     "modal>=1.4.1",
@@ -23,6 +29,7 @@ dependencies = [
     "pydantic>=2.12.5",
     "python-dotenv>=1.2.2",
     "rank-bm25>=0.2.2",
+    "scholarly>=1.7.11",
     "scikit-learn>=1.6.0",
     "sentence-transformers>=5.3.0",
     "streamlit>=1.50.0",

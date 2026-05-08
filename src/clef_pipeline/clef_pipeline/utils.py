@@ -7,6 +7,8 @@ from pathlib import Path
 
 import nltk
 from nltk.corpus import stopwords
+import csv
+from pathlib import Path
 
 nltk.download("stopwords", quiet=True)
 
@@ -18,7 +20,19 @@ STOPWORDS = frozenset(
 
 
 def load_query_split(lang: str, split: str) -> list[dict]:
-    """Load one language split from the official CheckThat dataset."""
+    """Load one language split from the official CheckThat dataset.
+
+    The competition dataset exposes ``train`` and ``dev`` through the language
+    configuration, while ``test`` is exposed via a top-level ``test`` config
+    containing one split per language.
+
+    Args:
+        lang: Language code such as ``en``, ``de``, or ``fr``.
+        split: Requested split name.
+
+    Returns:
+        Query rows as plain dictionaries.
+    """
     from datasets import load_dataset
 
     if split == "test":
@@ -91,22 +105,27 @@ class FusionProcessor:
 def read_custom_papers(file_path: str, start_id: int = 11000) -> list[dict]:
     """Read custom papers from a CSV file."""
     path = Path(file_path)
+
     if not path.exists():
         raise FileNotFoundError(f"custom_papers file not found: {path}")
+
     if path.suffix.lower() != ".csv":
         raise ValueError("custom_papers must be a .csv file for now")
 
-    documents: list[dict] = []
-    with path.open("r", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
+    documents = []
+    with path.open("r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+
         for i, row in enumerate(reader):
             pubkey = start_id + i
             documents.append(
                 {
                     "pubkey": pubkey,
-                    "title": (row.get("Title") or "").strip(),
-                    "authors": (row.get("Authors") or "").strip(),
-                    "abstract": (row.get("Abstract") or "").strip(),
+                    "title": row.get("Title", "").strip(),
+                    "authors": row.get("Authors", "").strip(),
+                    "venue": row.get("Venue", "").strip(),
+                    "abstract": row.get("Abstract", "").strip(),
                 }
             )
+
     return documents

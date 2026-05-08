@@ -1,3 +1,5 @@
+"""Modal training job for the BGE-M3 LoRA retriever adapter."""
+
 import modal
 
 # 1. Define the container image and install required libraries
@@ -24,6 +26,7 @@ volume = modal.Volume.from_name("clef-vol", create_if_missing=True)
     secrets=[modal.Secret.from_name("hf-token")],
 )
 def train_model():
+    """Train BGE-M3 with LoRA adapters and persist the best model to Modal volume."""
     from datasets import load_dataset
     from peft import LoraConfig, TaskType, PeftModel
     from sentence_transformers import (
@@ -168,4 +171,5 @@ def train_model():
 # 4. Entry point to trigger the remote run
 @app.local_entrypoint()
 def main():
+    """Launch the remote Modal training function."""
     train_model.remote()

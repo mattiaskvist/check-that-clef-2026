@@ -215,45 +215,68 @@ class BGEM3Retriever(BaseRetriever):
 class HarrierRetriever(BaseRetriever):
     """Dense retriever using Microsoft Harrier embedding models."""
 
-    DEFAULT_QUERY_PROMPT = (
-        "Instruct: Retrieve the implicitly referenced scientific article\nQuery: "
+    DEFAULT_GERMAN_QUERY_PROMPT = (
+        "Instruct: Finde den relevantesten medizinisch-wissenschaftlichen Artikel "
+        "zu dieser deutschsprachigen Aussage. Bewahre Fachbegriffe exakt.\nQuery: "
     )
 
+    DEFAULT_ENGLISH_QUERY_PROMPT = (
+        "Instruct: Find the most relevant medical/scientific article to this "
+        "English-language statement. Preserve technical terms exactly.\nQuery: "
+    )
+
+    DEFAULT_QUERY_PROMPT = DEFAULT_ENGLISH_QUERY_PROMPT
+
     def __init__(
-        self, model_name: str = "microsoft/harrier-oss-v1-27b", batch_size: int = 2
+        self,
+        model_name: str = "microsoft/harrier-oss-v1-27b",
+        batch_size: int = 24,
+        lora_id: str | None = None,
+        query_prompt: str | None = None,
     ):
         """Load Harrier embedding model and runtime settings.
 
         Args:
             model_name: Harrier model id.
             batch_size: Embedding batch size for encode calls.
+            lora_id: Optional PEFT adapter id or path to inject into the model.
+            query_prompt: Optional query instruction prompt for encode calls.
         """
         import torch
-        from sentence_transformers import SentenceTransformer, util
+        from sentence_transformers import util
 
         self.util = util
         self.torch = torch
         self.model_name = model_name
         self.batch_size = batch_size
+        self.lora_id = lora_id
         self.query_embeddings = None
         self._query_embeddings_by_name = {}
-        self.prompt = self.DEFAULT_QUERY_PROMPT
+        self.prompt = query_prompt or self.DEFAULT_QUERY_PROMPT
 
         print(f"Loading Dense Retriever ({model_name})...")
-        self.model = SentenceTransformer(
-            model_name, device="cuda", model_kwargs={"dtype": "auto"}
-        )
+        self.model = None
 
     def _cache_key(self) -> str:
         """Build cache namespace identifier for model settings."""
-        return self.model_name.replace("/", "--")
+        key = self.model_name.replace("/", "--")
+        lora_id = getattr(self, "lora_id", None)
+        if lora_id:
+            key += f"+{lora_id.replace('/', '--')}"
+        return key
 
     @staticmethod
-    def _texts_fingerprint(texts: list[str]) -> str:
+    def _texts_fingerprint(
+        texts: list[str], fingerprint_salt: str | None = None
+    ) -> str:
         """Compute a deterministic short fingerprint for text collections."""
         import hashlib
 
         digest = hashlib.sha256()
+        if fingerprint_salt is not None:
+            encoded_salt = fingerprint_salt.encode("utf-8", errors="ignore")
+            digest.update(len(encoded_salt).to_bytes(8, "little", signed=False))
+            digest.update(encoded_salt)
         for text in texts:
             encoded = text.encode("utf-8", errors="ignore")
             digest.update(len(encoded).to_bytes(8, "little", signed=False))
@@ -261,7 +284,11 @@ class HarrierRetriever(BaseRetriever):
         return digest.hexdigest()[:16]
 
     def _cache_path(
-        self, cache_dir: str | None, filename: str, texts: list[str] | None = None
+        self,
+        cache_dir: str | None,
+        filename: str,
+        texts: list[str] | None = None,
+        fingerprint_salt: str | None = None,
     ) -> str | None:
         """Build cache file path for embeddings."""
         import os
@@ -269,7 +296,7 @@ class HarrierRetriever(BaseRetriever):
         if cache_dir:
             stem, extension = os.path.splitext(filename)
             if texts is not None:
-                fingerprint = self._texts_fingerprint(texts)
+                fingerprint = self._texts_fingerprint(texts, fingerprint_salt)
                 filename = f"{stem}-{fingerprint}{extension}"
             return os.path.join(cache_dir, self._cache_key(), filename)
         return None
@@ -296,6 +323,9 @@ class HarrierRetriever(BaseRetriever):
         """
         import os
 
+        from peft import PeftModel
+        from sentence_transformers import SentenceTransformer
+
         if cache_path and os.path.exists(cache_path) and not force_recompute:
             print(f"[cache hit] Loading {label} from {cache_path}")
             embs = self.torch.load(cache_path, map_location="cuda", weights_only=True)
@@ -304,6 +334,23 @@ class HarrierRetriever(BaseRetriever):
 
         if force_recompute and cache_path and os.path.exists(cache_path):
             print(f"[cache bypass] Recomputing {label} from source texts.")
+
+        if self.model is None:
+            self.model = SentenceTransformer(
+                self.model_name,
+                device="cuda",
+                model_kwargs={"dtype": "auto"},
+                token=os.environ.get("HF_TOKEN"),
+            )
+            lora_id = getattr(self, "lora_id", None)
+            if lora_id:
+                print(f"Injecting LoRA adapters from {lora_id}...")
+                self.model[0].auto_model = PeftModel.from_pretrained(
+                    self.model[0].auto_model,
+                    lora_id,
+                    token=os.environ.get("HF_TOKEN"),
+                )
+                self.model = self.model.to("cuda")
 
         print(f"Encoding {len(texts)} {label}...")
         embs = self.model.encode(
@@ -345,13 +392,19 @@ class HarrierRetriever(BaseRetriever):
         force_recompute: bool = False,
     ):
         """Index query texts and store embeddings by cache name."""
-        path = self._cache_path(cache_dir, f"{cache_name}.pt", queries)
+        prompt = getattr(self, "prompt", self.DEFAULT_QUERY_PROMPT)
+        path = self._cache_path(
+            cache_dir,
+            f"{cache_name}.pt",
+            queries,
+            fingerprint_salt=prompt,
+        )
         query_embeddings = self._load_or_encode(
             queries,
             path,
             f"query embeddings ({cache_name})",
             force_recompute=force_recompute,
-            prompt=getattr(self, "prompt", self.DEFAULT_QUERY_PROMPT),
+            prompt=prompt,
         )
         self.query_embeddings = query_embeddings
         self._query_embeddings_by_name[cache_name] = query_embeddings
@@ -388,7 +441,7 @@ class HarrierRetriever(BaseRetriever):
 
         scores = self.util.cos_sim(query_embeddings[query_idx], self.embeddings)[0]
         ranked = self.torch.argsort(scores, descending=True).tolist()
-        return ranked, scores.cpu().numpy().tolist()
+        return ranked, scores.cpu().float().numpy().tolist()
 
     def search(self, query_idx: int, cache_name: str | None = None) -> list[int]:
         """Return dense ranking for one indexed query.
@@ -541,7 +594,9 @@ class SparseRetriever(BaseRetriever):
         if not scores_dict:
             if top_k is None:
                 top_k = 0
-            return np.empty((top_k,), dtype=np.int32), np.zeros((top_k,), dtype=np.float32)
+            return np.empty((top_k,), dtype=np.int64), np.zeros(
+                (top_k,), dtype=np.float32
+            )
 
         if (lang == "en" or self.use_translation) and self._term_graph is not None:
             expanded = self._diffusion_expand(tokenized_query, self._term_graph)
@@ -568,7 +623,7 @@ class SparseRetriever(BaseRetriever):
                     postings = self.bm25_model.index.get(term)
                     if not postings:
                         continue
-                    weight = (count / total)
+                    weight = count / total
                     for doc_id, _ in postings:
                         scores_dict[doc_id] += self.prf_weight * weight
 
@@ -684,6 +739,12 @@ class SparseRetriever(BaseRetriever):
         self._query_scores_by_name.clear()
 
     def _build_term_graph(self, docs: list[list[str]]):
+        """Build an undirected term co-occurrence graph from tokenized documents.
+
+        The sparse retriever uses this graph for query diffusion: terms that
+        repeatedly appear near each other in the collection can contribute a
+        small amount of weight to each other at search time.
+        """
         from collections import Counter, defaultdict
 
         term_graph = defaultdict(Counter)
@@ -700,6 +761,7 @@ class SparseRetriever(BaseRetriever):
         return term_graph
 
     def _diffusion_expand(self, tokens: list[str], term_graph):
+        """Expand query tokens with weighted neighbors from the term graph."""
         from collections import Counter
 
         weights = Counter({t: 1.0 for t in tokens})
@@ -712,8 +774,8 @@ class SparseRetriever(BaseRetriever):
                     continue
                 total = float(sum(neighbors.values())) + 1e-9
                 for neighbor, count in neighbors.most_common(int(self.diff_neighbors)):
-                    new_weights[neighbor] += weight * (count / total) * float(
-                        self.diffusion_decay
+                    new_weights[neighbor] += (
+                        weight * (count / total) * float(self.diffusion_decay)
                     )
             weights.update(new_weights)
 
@@ -721,9 +783,10 @@ class SparseRetriever(BaseRetriever):
 
     @staticmethod
     def _top_docs(scores_dict, k: int) -> list[int]:
+        """Return the top-k document ids from a sparse score dictionary."""
         if k <= 0 or not scores_dict:
             return []
-        doc_ids = np.fromiter(scores_dict.keys(), dtype=np.int32)
+        doc_ids = np.fromiter(scores_dict.keys(), dtype=np.int64)
         vals = np.fromiter(scores_dict.values(), dtype=np.float32)
         k = min(int(k), len(vals))
         top_idx = np.argpartition(vals, -k)[-k:]
@@ -733,6 +796,12 @@ class SparseRetriever(BaseRetriever):
     def _rank_and_pad(
         self, scores_dict, top_k: int | None
     ) -> tuple[np.ndarray, np.ndarray]:
+        """Convert sparse scores to fixed-length ranked ids and score arrays.
+
+        Fusion code expects dense and sparse score arrays to be indexable by
+        document id. If BM25 returns fewer than ``top_k`` matches, the method
+        pads with zero-scored documents so downstream stages keep stable shapes.
+        """
         corpus_size = len(getattr(getattr(self, "bm25_model", None), "doc_len", []))
         if corpus_size <= 0:
             corpus_size = len(getattr(self, "_docs_tokens", []) or [])
@@ -741,15 +810,17 @@ class SparseRetriever(BaseRetriever):
             top_k = corpus_size
         top_k = min(int(top_k), int(corpus_size))
 
-        doc_ids = np.fromiter(scores_dict.keys(), dtype=np.int32)
+        doc_ids = np.fromiter(scores_dict.keys(), dtype=np.int64)
         vals = np.fromiter(scores_dict.values(), dtype=np.float32)
         if len(vals) == 0:
-            return np.empty((top_k,), dtype=np.int32), np.zeros((top_k,), dtype=np.float32)
+            return np.empty((top_k,), dtype=np.int64), np.zeros(
+                (top_k,), dtype=np.float32
+            )
 
         k = min(top_k, len(vals))
         top_idx = np.argpartition(vals, -k)[-k:]
         top_idx = top_idx[np.argsort(vals[top_idx])[::-1]]
-        ranked_ids = doc_ids[top_idx].astype(np.int32)
+        ranked_ids = doc_ids[top_idx].astype(np.int64)
         ranked_scores = vals[top_idx].astype(np.float32)
 
         if len(ranked_ids) < top_k:
@@ -762,7 +833,9 @@ class SparseRetriever(BaseRetriever):
                     if len(filler) >= needed:
                         break
             if filler:
-                ranked_ids = np.concatenate([ranked_ids, np.asarray(filler, dtype=np.int32)])
+                ranked_ids = np.concatenate(
+                    [ranked_ids, np.asarray(filler, dtype=np.int64)]
+                )
                 ranked_scores = np.concatenate(
                     [ranked_scores, np.zeros((len(filler),), dtype=np.float32)]
                 )
@@ -816,7 +889,7 @@ class SparseRetriever(BaseRetriever):
 
         corpus_size = len(getattr(self.bm25_model, "doc_len", []))
         effective_top_k = corpus_size if top_k is None else min(top_k, corpus_size)
-        rankings = np.empty((len(queries), effective_top_k), dtype=np.int32)
+        rankings = np.empty((len(queries), effective_top_k), dtype=np.int64)
         scores = np.empty((len(queries), effective_top_k), dtype=np.float32)
 
         for query_idx, query_text in enumerate(queries):
@@ -913,7 +986,8 @@ class SparseRetriever(BaseRetriever):
             if corpus_size <= 0 and len(ranked_indices) > 0:
                 corpus_size = int(np.max(ranked_indices)) + 1
             full_scores = np.zeros(corpus_size, dtype=np.float32)
-            full_scores[ranked_indices] = ranked_scores
+            valid = (ranked_indices >= 0) & (ranked_indices < corpus_size)
+            full_scores[ranked_indices[valid]] = ranked_scores[valid]
             return full_scores.tolist()
 
         if cache_name is not None:
