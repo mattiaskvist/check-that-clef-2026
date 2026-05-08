@@ -7,6 +7,9 @@ from collections import defaultdict
 from .utils import MRR_at_5, recall_at_K
 
 
+DENSE_SPARSE_RECALL_CUTOFFS = (5, 10, 30, 50, 100, 200)
+
+
 def _new_stage_buckets(fusion_top_k: int) -> dict[str, dict[str, list[float]]]:
     """Create empty metric buckets for each pipeline stage.
 
@@ -16,9 +19,12 @@ def _new_stage_buckets(fusion_top_k: int) -> dict[str, dict[str, list[float]]]:
     Returns:
         Nested dict of metric lists keyed by stage and metric name.
     """
+    dense_sparse_metrics = ["mrr5"] + [
+        f"r{cutoff}" for cutoff in DENSE_SPARSE_RECALL_CUTOFFS
+    ]
     return {
-        "dense": {m: [] for m in ["mrr5", "r5", "r10", "r30", "r50"]},
-        "sparse": {m: [] for m in ["mrr5", "r5", "r10", "r30", "r50"]},
+        "dense": {m: [] for m in dense_sparse_metrics},
+        "sparse": {m: [] for m in dense_sparse_metrics},
         "rrf": {"mrr5": [], f"r{fusion_top_k}": []},
         "final": {"mrr5": [], "r5": []},
     }
@@ -62,10 +68,10 @@ class EvaluationMetrics:
         for stage_name in ("dense", "sparse"):
             preds = stages.get(stage_name, [])
             buckets[stage_name]["mrr5"].append(MRR_at_5(preds, true_pubkey))
-            buckets[stage_name]["r5"].append(recall_at_K(preds, true_pubkey, 5))
-            buckets[stage_name]["r10"].append(recall_at_K(preds, true_pubkey, 10))
-            buckets[stage_name]["r30"].append(recall_at_K(preds, true_pubkey, 30))
-            buckets[stage_name]["r50"].append(recall_at_K(preds, true_pubkey, 50))
+            for cutoff in DENSE_SPARSE_RECALL_CUTOFFS:
+                buckets[stage_name][f"r{cutoff}"].append(
+                    recall_at_K(preds, true_pubkey, cutoff)
+                )
 
         rrf_preds = stages.get("rrf", [])
         buckets["rrf"]["mrr5"].append(MRR_at_5(rrf_preds, true_pubkey))

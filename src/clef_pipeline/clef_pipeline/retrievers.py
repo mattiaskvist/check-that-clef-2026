@@ -215,7 +215,10 @@ class BGEM3Retriever(BaseRetriever):
 class HarrierRetriever(BaseRetriever):
     """Dense retriever using Microsoft Harrier embedding models."""
 
-    DEFAULT_GERMAN_QUERY_PROMPT = "Instruct: Finde den relevantesten medizinisch-wissenschaftlichen Artikel zu dieser deutschsprachigen Aussage. Bewahre Fachbegriffe exakt.\nQuery: "
+    DEFAULT_GERMAN_QUERY_PROMPT = (
+        "Instruct: Finde den relevantesten medizinisch-wissenschaftlichen Artikel "
+        "zu dieser deutschsprachigen Aussage. Bewahre Fachbegriffe exakt.\nQuery: "
+    )
 
     DEFAULT_ENGLISH_QUERY_PROMPT = (
         "Instruct: Find the most relevant medical/scientific article to this "
@@ -229,6 +232,7 @@ class HarrierRetriever(BaseRetriever):
         model_name: str = "microsoft/harrier-oss-v1-27b",
         batch_size: int = 24,
         lora_id: str | None = None,
+        query_prompt: str | None = None,
     ):
         """Load Harrier embedding model and runtime settings.
 
@@ -236,6 +240,7 @@ class HarrierRetriever(BaseRetriever):
             model_name: Harrier model id.
             batch_size: Embedding batch size for encode calls.
             lora_id: Optional PEFT adapter id or path to inject into the model.
+            query_prompt: Optional query instruction prompt for encode calls.
         """
         import torch
         from sentence_transformers import util
@@ -247,7 +252,7 @@ class HarrierRetriever(BaseRetriever):
         self.lora_id = lora_id
         self.query_embeddings = None
         self._query_embeddings_by_name = {}
-        self.prompt = self.DEFAULT_QUERY_PROMPT
+        self.prompt = query_prompt or self.DEFAULT_QUERY_PROMPT
 
         print(f"Loading Dense Retriever ({model_name})...")
         self.model = None
@@ -261,11 +266,17 @@ class HarrierRetriever(BaseRetriever):
         return key
 
     @staticmethod
-    def _texts_fingerprint(texts: list[str]) -> str:
+    def _texts_fingerprint(
+        texts: list[str], fingerprint_salt: str | None = None
+    ) -> str:
         """Compute a deterministic short fingerprint for text collections."""
         import hashlib
 
         digest = hashlib.sha256()
+        if fingerprint_salt is not None:
+            encoded_salt = fingerprint_salt.encode("utf-8", errors="ignore")
+            digest.update(len(encoded_salt).to_bytes(8, "little", signed=False))
+            digest.update(encoded_salt)
         for text in texts:
             encoded = text.encode("utf-8", errors="ignore")
             digest.update(len(encoded).to_bytes(8, "little", signed=False))
@@ -273,7 +284,11 @@ class HarrierRetriever(BaseRetriever):
         return digest.hexdigest()[:16]
 
     def _cache_path(
-        self, cache_dir: str | None, filename: str, texts: list[str] | None = None
+        self,
+        cache_dir: str | None,
+        filename: str,
+        texts: list[str] | None = None,
+        fingerprint_salt: str | None = None,
     ) -> str | None:
         """Build cache file path for embeddings."""
         import os
@@ -281,7 +296,7 @@ class HarrierRetriever(BaseRetriever):
         if cache_dir:
             stem, extension = os.path.splitext(filename)
             if texts is not None:
-                fingerprint = self._texts_fingerprint(texts)
+                fingerprint = self._texts_fingerprint(texts, fingerprint_salt)
                 filename = f"{stem}-{fingerprint}{extension}"
             return os.path.join(cache_dir, self._cache_key(), filename)
         return None
@@ -377,13 +392,19 @@ class HarrierRetriever(BaseRetriever):
         force_recompute: bool = False,
     ):
         """Index query texts and store embeddings by cache name."""
-        path = self._cache_path(cache_dir, f"{cache_name}.pt", queries)
+        prompt = getattr(self, "prompt", self.DEFAULT_QUERY_PROMPT)
+        path = self._cache_path(
+            cache_dir,
+            f"{cache_name}.pt",
+            queries,
+            fingerprint_salt=prompt,
+        )
         query_embeddings = self._load_or_encode(
             queries,
             path,
             f"query embeddings ({cache_name})",
             force_recompute=force_recompute,
-            prompt=getattr(self, "prompt", self.DEFAULT_QUERY_PROMPT),
+            prompt=prompt,
         )
         self.query_embeddings = query_embeddings
         self._query_embeddings_by_name[cache_name] = query_embeddings

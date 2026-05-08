@@ -13,7 +13,7 @@ from .pipeline_config import PipelineConfig
 class RetrievalPipeline:
     """Coordinate indexing, retrieval, fusion, and reranking stages."""
 
-    DEFAULT_DENSE_DOC_MAX_CHARS = 2048
+    DEFAULT_DENSE_DOC_MAX_CHARS: int | None = 8192
 
     def __init__(
         self,
@@ -163,7 +163,7 @@ class RetrievalPipeline:
         except TypeError:
             retriever.index_queries(query_texts)
 
-    def _dense_doc_text_limit(self) -> int:
+    def _dense_doc_text_limit(self) -> int | None:
         """Resolve the max character budget for dense document indexing."""
         return self.DEFAULT_DENSE_DOC_MAX_CHARS
 
@@ -214,9 +214,10 @@ class RetrievalPipeline:
         self.article_pubkeys = [doc["pubkey"] for doc in self.collection_documents]
         dense_doc_text_limit = self._dense_doc_text_limit()
         article_texts = [
-            self._document_to_text(doc)[:dense_doc_text_limit]
-            for doc in self.collection_documents
+            self._document_to_text(doc) for doc in self.collection_documents
         ]
+        if dense_doc_text_limit is not None:
+            article_texts = [text[:dense_doc_text_limit] for text in article_texts]
 
         if self.reranker is not None:
             self.reranker_corpus = self.reranker.preprocess_corpus(

@@ -317,7 +317,7 @@ class Qwen3Reranker(BaseReranker):
         self,
         model_name: str = "Qwen/Qwen3-Reranker-8B",
         max_length: int | None = 8192,
-        micro_batch_size: int = 16,
+        micro_batch_size: int = 4,
         instruction: str | None = None,
     ):
         """Store model settings and defer heavy loading until first use.
@@ -325,9 +325,9 @@ class Qwen3Reranker(BaseReranker):
         Args:
             model_name: Hugging Face model id. Use ``Qwen/Qwen3-Reranker-0.6B``,
                 ``Qwen/Qwen3-Reranker-4B`` or ``Qwen/Qwen3-Reranker-8B``.
-            max_length: Token budget per (query, passage) pair. Qwen3
-                supports 32k but 2048 is plenty for title+abstract and much
-                faster.
+            max_length: Token budget per (query, passage) pair. Use ``None``
+                to disable tokenizer truncation and use full sequence length
+                (bounded only by the model context window and available memory).
             micro_batch_size: Pairs per forward pass. Default 8 is tuned
                 for B200 (192 GB HBM) running the 8B variant at fp16; drop
                 this if running on A100-40GB or using flash_attention_2.
@@ -335,7 +335,7 @@ class Qwen3Reranker(BaseReranker):
                 None, a scientific-paper-retrieval default is used.
         """
         self.model_name = model_name
-        self.max_length = int(max_length)
+        self.max_length = int(max_length) if max_length is not None else None
         self.micro_batch_size = max(1, int(micro_batch_size))
         self.instruction = instruction or self._DEFAULT_INSTRUCTION
         self.model = None
@@ -377,22 +377,23 @@ class Qwen3Reranker(BaseReranker):
 
     def _process_inputs(self, pairs: list[str]):
         """Tokenize pairs and splice the system/user/assistant scaffold."""
-        budget = self.max_length - len(self.prefix_tokens) - len(self.suffix_tokens)
-        inputs = self.tokenizer(
-            pairs,
-            padding=False,
-            truncation="longest_first",
-            return_attention_mask=False,
-            max_length=budget,
-        )
+        tokenizer_kwargs = {
+            "padding": False,
+            "return_attention_mask": False,
+        }
+        if self.max_length is not None:
+            budget = self.max_length - len(self.prefix_tokens) - len(self.suffix_tokens)
+            tokenizer_kwargs["truncation"] = "longest_first"
+            tokenizer_kwargs["max_length"] = budget
+        else:
+            tokenizer_kwargs["truncation"] = False
+        inputs = self.tokenizer(pairs, **tokenizer_kwargs)
         for i, ids in enumerate(inputs["input_ids"]):
             inputs["input_ids"][i] = self.prefix_tokens + ids + self.suffix_tokens
-        inputs = self.tokenizer.pad(
-            inputs,
-            padding=True,
-            return_tensors="pt",
-            max_length=self.max_length,
-        )
+        pad_kwargs = {"padding": True, "return_tensors": "pt"}
+        if self.max_length is not None:
+            pad_kwargs["max_length"] = self.max_length
+        inputs = self.tokenizer.pad(inputs, **pad_kwargs)
         return {k: v.to(self.model.device) for k, v in inputs.items()}
 
     def rerank(
