@@ -85,6 +85,25 @@ class HarrierRetrieverRegressionTests(unittest.TestCase):
         self.assertNotEqual(path_a, path_b)
         self.assertEqual(path_a, path_a_repeat)
 
+    def test_query_cache_path_depends_on_prompt_fingerprint(self):
+        retriever = HarrierRetriever.__new__(HarrierRetriever)
+        retriever.model_name = "microsoft/harrier-oss-v1-27b"
+
+        path_a = retriever._cache_path(
+            "/cache", "queries_de.pt", ["claim"], fingerprint_salt="prompt-a"
+        )
+        path_b = retriever._cache_path(
+            "/cache", "queries_de.pt", ["claim"], fingerprint_salt="prompt-b"
+        )
+        path_a_repeat = retriever._cache_path(
+            "/cache", "queries_de.pt", ["claim"], fingerprint_salt="prompt-a"
+        )
+        document_path = retriever._cache_path("/cache", "documents.pt", ["claim"])
+
+        self.assertNotEqual(path_a, path_b)
+        self.assertEqual(path_a, path_a_repeat)
+        self.assertNotEqual(path_a, document_path)
+
     def test_force_recompute_rebuilds_document_cache(self):
         retriever = HarrierRetriever.__new__(HarrierRetriever)
         retriever.model_name = "microsoft/harrier-oss-v1-27b"
